@@ -3,11 +3,12 @@ import { GanScore } from './components/GanScore';
 import { QualityGates } from './components/QualityGates';
 import { ControlPanel } from './components/ControlPanel';
 import { LogViewer } from './components/LogViewer';
+import { TestExecutionPanel } from './components/TestExecutionPanel';
 import { useHarnessData, useStartHarness } from './hooks/useHarnessData';
 
 function App() {
   const { taskQueue, ganSummary, gateStatus, running } = useHarnessData();
-  const { start, loading } = useStartHarness();
+  const { start } = useStartHarness();
 
   return (
     <div className="app">
@@ -29,6 +30,7 @@ function App() {
           onStop={() => console.log('Stop')}
           onRestart={() => console.log('Restart')}
         />
+        <TestExecutionPanel />
       </div>
 
       <LogViewer />

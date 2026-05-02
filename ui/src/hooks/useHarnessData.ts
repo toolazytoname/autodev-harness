@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { TaskQueue, GanSummary, GateStatus, HarnessState } from '../types';
 
-const AUTODEV_PATH = './autodev-harness';
-
 export function useHarnessData(refreshInterval = 5000) {
   const [state, setState] = useState<HarnessState>({
     taskQueue: null,
