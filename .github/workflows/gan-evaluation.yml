@@ -1,0 +1,86 @@
+name: GAN Evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_dir:
+        description: 'Project directory'
+        required: true
+        default: '.'
+      iterations:
+        description: 'Max iterations'
+        required: false
+        default: '10'
+
+jobs:
+  gan-evaluation:
+    name: GAN Quality Evaluation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Install Claude CLI
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+      
+      - name: Run GAN Loop
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GAN_MAX_ITERATIONS: ${{ github.event.inputs.iterations || '10' }}
+          GAN_PASS_THRESHOLD: 7.0
+        run: |
+          ./autodev-harness/scripts/gan-loop.sh
+      
+      - name: Check GAN Result
+        id: result
+        run: |
+          if [ -f autodev-harness/feedback/gan/summary.json ]; then
+            echo "passed=$(jq -r '.passed' autodev-harness/feedback/gan/summary.json)" >> $GITHUB_OUTPUT
+            echo "score=$(jq -r '.finalScore' autodev-harness/feedback/gan/summary.json)" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Upload feedback
+        uses: actions/upload-artifact@v4
+        with:
+          name: gan-feedback
+          path: autodev-harness/feedback/gan/
+      
+      - name: Post result
+        if: steps.result.outputs.passed == 'true'
+        run: echo "✓ GAN Evaluation PASSED with score ${{ steps.result.outputs.score }}"
+
+  auto-commit:
+    name: Auto-commit Changes
+    runs-on: ubuntu-latest
+    needs: gan-evaluation
+    if: github.event.inputs.auto_commit == 'true'
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      
+      - name: Download feedback
+        uses: actions/download-artifact@v4
+        with:
+          name: gan-feedback
+          path: autodev-harness/feedback/gan/
+      
+      - name: Commit changes
+        run: |
+          git config user.name "AutoDevHarness"
+          git config user.email "bot@autodev.local"
+          git add -A
+          git diff --staged --quiet || git commit -m "chore: GAN evaluation - quality improvements"
+          git push

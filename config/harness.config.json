@@ -1,0 +1,48 @@
+{
+  "brief": "",
+  "projectName": "",
+  "projectType": "fullstack",
+  "language": "typescript",
+  "framework": "next",
+
+  "harness": {
+    "maxIterations": 15,
+    "passThreshold": 7.0,
+    "checkpointInterval": 5,
+    "parallelAgents": 2,
+    "executionMode": "sequential"
+  },
+
+  "gan": {
+    "enabled": true,
+    "maxCyclesPerTask": 5,
+    "plateauThreshold": 0.3,
+    "improvementRequired": true
+  },
+
+  "models": {
+    "planner": "opus",
+    "generator": "opus",
+    "evaluator": "opus"
+  },
+
+  "qualityGates": {
+    "lint": { "enabled": true, "timeout": 120, "blocking": true },
+    "build": { "enabled": true, "timeout": 300, "blocking": true },
+    "test": { "enabled": true, "timeout": 300, "blocking": true, "coverageThreshold": 80 },
+    "e2e": { "enabled": true, "timeout": 600, "blocking": false },
+    "security": { "enabled": true, "timeout": 180, "blocking": false }
+  },
+
+  "devServer": {
+    "port": 3000,
+    "command": "npm run dev",
+    "startupTimeout": 60
+  },
+
+  "context": {
+    "compactionThreshold": 150000,
+    "snapshotInterval": 5,
+    "retainSnapshots": 10
+  }
+}
