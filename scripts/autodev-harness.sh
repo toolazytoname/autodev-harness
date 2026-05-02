@@ -7,7 +7,9 @@
 
 set -euo pipefail
 
-HARNESS_DIR="./autodev-harness"
+# HARNESS_DIR is relative to the script's directory, not current directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HARNESS_DIR="${HARNESS_DIR:-$SCRIPT_DIR/..}"
 CONFIG_FILE="${HARNESS_DIR}/config/harness.config.json"
 TASK_QUEUE_FILE="${HARNESS_DIR}/state/task-queue.json"
 
@@ -91,7 +93,7 @@ run_planner() {
   fi
   phase "PHASE 1: Planning"
   log "Launching Planner..."
-  claude -p --model "$PLANNER_MODEL" --dangerously-skip-permissions \
+  claude -p --model "$PLANNER_MODEL" --dangerously-skip-permissions --effort high \
     "You are the Planner in AutoDevHarness. Brief: \"$BRIEF\" Project type: $PROJECT_TYPE
 
 Create files:
@@ -110,7 +112,7 @@ run_tasks() {
     task_id=$("${HARNESS_DIR}/scripts/task-queue-engine.sh" run 2>/dev/null)
     [ -z "$task_id" ] && break
     log "━━━ Task: $task_id ━━━"
-    claude -p --model "$GENERATOR_MODEL" --dangerously-skip-permissions \
+    claude -p --model "$GENERATOR_MODEL" --dangerously-skip-permissions --effort high \
       --allowedTools "Read,Write,Edit,Bash,Grep,Glob" \
       "Implement task $task_id. Read ${HARNESS_DIR}/SPEC.md and ${HARNESS_DIR}/state/task-queue.json.
 Run quality gates, commit changes." \

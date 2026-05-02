@@ -74,7 +74,7 @@ run_generator() {
 
   log "Launching Generator (iteration $iteration)..."
 
-  claude -p --model opus --dangerously-skip-permissions \
+  claude -p --model opus --dangerously-skip-permissions --effort high \
     "You are the Generator in a GAN-style harness.
 
 Iteration: $iteration
@@ -97,7 +97,7 @@ run_evaluator() {
 
   log "Launching Evaluator (iteration $iteration)..."
 
-  claude -p --model opus --dangerously-skip-permissions \
+  claude -p --model opus --dangerously-skip-permissions --effort high \
     --allowedTools "Read,Write,Bash,Grep,Glob" \
     "You are the Evaluator in a GAN-style harness.
 
