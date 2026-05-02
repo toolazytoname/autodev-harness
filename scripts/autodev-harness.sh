@@ -91,7 +91,7 @@ run_planner() {
   fi
   phase "PHASE 1: Planning"
   log "Launching Planner..."
-  claude -p --model "$PLANNER_MODEL" \
+  claude -p --model "$PLANNER_MODEL" --dangerously-skip-permissions \
     "You are the Planner in AutoDevHarness. Brief: \"$BRIEF\" Project type: $PROJECT_TYPE
 
 Create files:
@@ -110,7 +110,7 @@ run_tasks() {
     task_id=$("${HARNESS_DIR}/scripts/task-queue-engine.sh" run 2>/dev/null)
     [ -z "$task_id" ] && break
     log "━━━ Task: $task_id ━━━"
-    claude -p --model "$GENERATOR_MODEL" \
+    claude -p --model "$GENERATOR_MODEL" --dangerously-skip-permissions \
       --allowedTools "Read,Write,Edit,Bash,Grep,Glob" \
       "Implement task $task_id. Read ${HARNESS_DIR}/SPEC.md and ${HARNESS_DIR}/state/task-queue.json.
 Run quality gates, commit changes." \
