@@ -13,8 +13,10 @@ set -euo pipefail
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
-TASK_QUEUE_FILE="${TASK_QUEUE_FILE:-./autodev-harness/state/task-queue.json}"
-PROJECT_DIR="${PROJECT_DIR:-.}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HARNESS_DIR="${HARNESS_DIR:-$SCRIPT_DIR/..}"
+TASK_QUEUE_FILE="${TASK_QUEUE_FILE:-$HARNESS_DIR/state/task-queue.json}"
+PROJECT_DIR="${PROJECT_DIR:-$HARNESS_DIR}"
 
 # Colors
 RED='\033[0;31m'
