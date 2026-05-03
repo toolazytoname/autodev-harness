@@ -1,227 +1,87 @@
-:root {
-  --bg: #0f172a;
-  --bg-card: #1e293b;
-  --border: #334155;
-  --text: #e2e8f0;
-  --text-muted: #94a3b8;
-  --green: #22c55e;
-  --yellow: #eab308;
-  --red: #ef4444;
-  --blue: #38bdf8;
+@import "tailwindcss";
+
+/* PetPal Design Tokens - Based on SPEC.md */
+@theme {
+  /* Colors - Warm cartoon style for children */
+  --color-primary: #FF9B42;
+  --color-primary-dark: #E8850A;
+  --color-secondary: #FFD93D;
+  --color-accent: #6BCB77;
+  --color-background: #FFF8F0;
+  --color-surface: #FFFFFF;
+  --color-text: #4A4A4A;
+  --color-text-light: #8B8B8B;
+  --color-error: #FF6B6B;
+  --color-success: #4ECDC4;
+
+  /* Fonts */
+  --font-display: 'Nunito', cursive;
+  --font-body: 'Noto Sans SC', 'Nunito', sans-serif;
+  --font-mono: 'Quicksand', sans-serif;
+
+  /* Spacing (8px base) */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
+
+  /* Border Radius */
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-card: 0 4px 20px rgba(255, 155, 66, 0.1);
+  --shadow-hover: 0 8px 30px rgba(255, 155, 66, 0.2);
+
+  /* Animation */
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+/* Base styles */
+html {
+  font-family: var(--font-body);
+  background: var(--color-background);
+  color: var(--color-text);
+}
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: var(--bg);
-  color: var(--text);
   min-height: 100vh;
 }
 
-.app {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 2rem;
+/* Utility classes for fonts */
+.font-display {
+  font-family: var(--font-display);
 }
 
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 2rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border);
+.font-body {
+  font-family: var(--font-body);
 }
 
-.header h1 {
-  color: var(--blue);
-  font-size: 1.5rem;
+.font-mono {
+  font-family: var(--font-mono);
 }
 
-.live {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--green);
-  font-size: 0.875rem;
-}
-
-.live-dot {
+/* Custom scrollbar for PetPal */
+::-webkit-scrollbar {
   width: 8px;
   height: 8px;
-  background: var(--green);
-  border-radius: 50%;
-  animation: pulse 2s infinite;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+::-webkit-scrollbar-track {
+  background: var(--color-background);
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-  gap: 1.5rem;
-  margin-bottom: 2rem;
+::-webkit-scrollbar-thumb {
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
 }
 
-.card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 1.5rem;
-}
-
-.card h2 {
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 1rem;
-}
-
-.metric {
-  font-size: 3rem;
-  font-weight: 700;
-  color: var(--green);
-}
-
-.progress-bar {
-  height: 12px;
-  background: var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-  margin: 1rem 0;
-}
-
-.progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--green), #84cc16);
-  transition: width 0.5s;
-}
-
-.gates {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  margin-top: 1rem;
-}
-
-.gate {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  font-size: 0.875rem;
-  border: 1px solid;
-}
-
-.gate.pass { background: rgba(34, 197, 94, 0.1); color: var(--green); border-color: var(--green); }
-.gate.fail { background: rgba(239, 68, 68, 0.1); color: var(--red); border-color: var(--red); }
-.gate.pending { background: rgba(148, 163, 184, 0.1); color: var(--text-muted); border-color: var(--border); }
-
-.task-list {
-  list-style: none;
-  margin-top: 1rem;
-}
-
-.task-list li {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.task-list li:last-child { border-bottom: none; }
-
-.task-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.task-dot.completed { background: var(--green); }
-.task-dot.in-progress { background: var(--yellow); }
-.task-dot.pending { background: var(--border); }
-.task-dot.failed { background: var(--red); }
-
-.task-id {
-  font-family: monospace;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  min-width: 80px;
-}
-
-.score-ring {
-  width: 140px;
-  height: 140px;
-  border-radius: 50%;
-  border: 8px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto;
-}
-
-.score-ring.pass { border-color: var(--green); }
-.score-ring.fail { border-color: var(--red); }
-.score-ring .value { font-size: 3rem; font-weight: 700; }
-.score-ring .label { font-size: 0.875rem; color: var(--text-muted); }
-
-.controls {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.btn {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-primary { background: var(--blue); color: white; }
-.btn-primary:hover { background: #0ea5e9; }
-.btn-secondary { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); }
-.btn-secondary:hover { background: var(--border); }
-.btn-danger { background: var(--red); color: white; }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.logs {
-  background: #0d1117;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1rem;
-  font-family: 'Monaco', 'Menlo', monospace;
-  font-size: 0.75rem;
-  max-height: 300px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  color: var(--text-muted);
-}
-
-.timestamp {
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  margin-top: 1rem;
-  text-align: right;
-}
-
-.status-row {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 1rem;
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary-dark);
 }
