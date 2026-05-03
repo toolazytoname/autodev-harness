@@ -9,14 +9,15 @@ set -euo pipefail
 
 # HARNESS_DIR is relative to the script's directory, not current directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HARNESS_DIR="${HARNESS_DIR:-$SCRIPT_DIR/..}"
+HARNESS_DIR="${HARNESS_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+export HARNESS_DIR
 CONFIG_FILE="${HARNESS_DIR}/config/harness.config.json"
 TASK_QUEUE_FILE="${HARNESS_DIR}/state/task-queue.json"
 
 BRIEF=""
 PROJECT_TYPE="fullstack"
-PLANNER_MODEL="opus"
-GENERATOR_MODEL="opus"
+PLANNER_MODEL="minimax-latest"
+GENERATOR_MODEL="minimax-latest"
 MAX_ITERATIONS=15
 PASS_THRESHOLD=7.0
 DEV_PORT=3000
@@ -43,7 +44,7 @@ parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --type) PROJECT_TYPE="$2"; shift 2 ;;
-      --model) GENERATOR_MODEL="$2"; shift 2 ;;
+      --model) PLANNER_MODEL="$2"; GENERATOR_MODEL="$2"; shift 2 ;;
       --iterations) MAX_ITERATIONS="$2"; shift 2 ;;
       --threshold) PASS_THRESHOLD="$2"; shift 2 ;;
       --skip-planner) SKIP_PLANNER=true; shift ;;
@@ -52,7 +53,7 @@ parse_args() {
       --help)
         echo "Usage: $0 \"brief\" [options]"
         echo "  --type TYPE        Project type: fullstack, frontend, api, library"
-        echo "  --model MODEL      AI model: opus, sonnet (default: opus)"
+        echo "  --model MODEL      AI model (default: minimax-latest)"
         echo "  --iterations N     Max GAN iterations (default: 15)"
         echo "  --threshold SCORE  Pass threshold 1-10 (default: 7.0)"
         echo "  --skip-planner     Skip planning phase"
@@ -93,27 +94,44 @@ run_planner() {
   fi
   phase "PHASE 1: Planning"
   log "Launching Planner..."
-  claude -p --model "$PLANNER_MODEL" --dangerously-skip-permissions --effort high --max-tokens 16000 \
+
+  effort=high claude -p --model "$PLANNER_MODEL" --dangerously-skip-permissions \
     "You are the Planner in AutoDevHarness. Brief: \"$BRIEF\" Project type: $PROJECT_TYPE
 
-Create files:
-1. ${HARNESS_DIR}/SPEC.md - Full product spec with features, design, tech stack
-2. ${HARNESS_DIR}/config/eval-rubric.md - Evaluation rubric
-3. Update ${HARNESS_DIR}/state/task-queue.json with task decomposition
+CRITICAL: You MUST write tasks to the JSON file using jq!
 
-Be ambitious: 12-16 features." \
-    2>&1 | tee "${HARNESS_DIR}/logs/planner.log"
+Create files:
+1. Write to ${HARNESS_DIR}/SPEC.md - Full product spec with features, design, tech stack
+2. Write to ${HARNESS_DIR}/config/eval-rubric.md - Evaluation rubric
+3. CRITICAL: Add tasks to ${HARNESS_DIR}/state/task-queue.json using jq:
+   bash: jq '.tasks = [...]' -M \${HARNESS_DIR}/state/task-queue.json > tmp.json && mv tmp.json \${HARNESS_DIR}/state/task-queue.json
+   Each task: {\"id\":\"TASK-001\",\"name\":\"Task Name\",\"status\":\"pending\",\"priority\":\"P0\",\"deps\":[]}
+
+Create 10-14 tasks. Write them to the JSON file!" 2>&1 | tee "${HARNESS_DIR}/logs/planner.log"
+
   [ -f "${HARNESS_DIR}/SPEC.md" ] && ok "Plan generated" || fail "Planner failed"
+
+  # Verify tasks were created
+  task_count=$(jq '(.tasks // []) | length' "${HARNESS_DIR}/state/task-queue.json" 2>/dev/null || echo 0)
+  if [ "$task_count" -eq 0 ]; then
+    warn "No tasks found in task-queue.json, creating default tasks"
+    jq '.tasks = [
+      {"id":"TASK-001","name":"Project Setup","status":"pending","priority":"P0","deps":[]},
+      {"id":"TASK-002","name":"Core Features","status":"pending","priority":"P0","deps":["TASK-001"]},
+      {"id":"TASK-003","name":"UI Implementation","status":"pending","priority":"P1","deps":["TASK-001"]},
+      {"id":"TASK-004","name":"Testing & Polish","status":"pending","priority":"P1","deps":["TASK-002","TASK-003"]}
+    ]' "${HARNESS_DIR}/state/task-queue.json" > tmp.json && mv tmp.json "${HARNESS_DIR}/state/task-queue.json"
+  fi
 }
 
 run_tasks() {
   phase "PHASE 2: Task Execution"
   while true; do
-    task_id=$("${HARNESS_DIR}/scripts/task-queue-engine.sh" run 2>/dev/null)
+    task_output=$("${HARNESS_DIR}/scripts/task-queue-engine.sh" run 2>/dev/null)
+    task_id=$(echo "$task_output" | grep -oE '[A-Z][A-Z0-9]*[-_]?[A-Z0-9]*' | grep -E '^[A-Z]{2,}[-_]?[0-9]+$' | head -1)
     [ -z "$task_id" ] && break
     log "━━━ Task: $task_id ━━━"
-    claude -p --model "$GENERATOR_MODEL" --dangerously-skip-permissions --effort high --max-tokens 16000 \
-      --allowedTools "Read,Write,Edit,Bash,Grep,Glob" \
+    effort=high claude -p --model "$GENERATOR_MODEL" --dangerously-skip-permissions \
       "Implement task $task_id. Read ${HARNESS_DIR}/SPEC.md and ${HARNESS_DIR}/state/task-queue.json.
 Run quality gates, commit changes." \
       2>&1 | tee "${HARNESS_DIR}/logs/task-${task_id}.log"

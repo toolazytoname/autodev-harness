@@ -14,7 +14,8 @@ set -euo pipefail
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HARNESS_DIR="${HARNESS_DIR:-$SCRIPT_DIR/..}"
+HARNESS_DIR="${HARNESS_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+export HARNESS_DIR
 TASK_QUEUE_FILE="${TASK_QUEUE_FILE:-$HARNESS_DIR/state/task-queue.json}"
 PROJECT_DIR="${PROJECT_DIR:-$HARNESS_DIR}"
 
@@ -101,20 +102,23 @@ update_task() {
   fi
 
   local new_queue=$(jq --arg id "$task_id" --argjson updates "$updates" \
-    '.tasks |= [.[] | if .id == $id then . + $updates else . end]' "$TASK_QUEUE_FILE")
+    '(.tasks // .taskQueue) as $tasks |
+    .tasks = ($tasks | [.[] | if (.id | tostring) == $id then . + $updates else . end])' "$TASK_QUEUE_FILE")
   echo "$new_queue" > "$TASK_QUEUE_FILE"
 }
 
 get_task() {
   local task_id="$1"
-  jq -r --arg id "$task_id" '.tasks[] | select(.id == $id)' "$TASK_QUEUE_FILE"
+  jq -r --arg id "$task_id" '(.tasks // .taskQueue)[] | select((.id | tostring) == $id)' "$TASK_QUEUE_FILE"
 }
 
 get_next_ready_task() {
   jq -r '
-    .tasks |
-    map(select(.status == "pending")) |
-    sort_by(.priority) |
+    (.tasks // .taskQueue) |
+    # First try in-progress tasks, then pending
+    (map(select(.status == "in-progress")) + map(select((.status // "pending") == "pending"))) |
+    # Sort by priority: P0 first, then P1, P2
+    sort_by(if .priority == "P0" then 0 elif .priority == "P1" then 1 elif .priority == "P2" then 2 else 3 end) |
     .[0].id // empty
   ' "$TASK_QUEUE_FILE"
 }
@@ -123,11 +127,12 @@ get_next_ready_task() {
 
 update_progress() {
   local new_queue=$(jq '
+    (.tasks // .taskQueue) as $tasks |
     .progress = {
-      completed: [.tasks[] | select(.status == "completed")] | length,
-      inProgress: [.tasks[] | select(.status == "in-progress")] | length,
-      pending: [.tasks[] | select(.status == "pending")] | length,
-      failed: [.tasks[] | select(.status == "failed")] | length
+      completed: ($tasks | map(select((.status // "pending") == "completed")) | length),
+      inProgress: ($tasks | map(select((.status // "pending") == "in-progress")) | length),
+      pending: ($tasks | map(select((.status // "pending") == "pending")) | length),
+      failed: ($tasks | map(select((.status // "pending") == "failed")) | length)
     }
   ' "$TASK_QUEUE_FILE")
   echo "$new_queue" > "$TASK_QUEUE_FILE"
@@ -140,7 +145,7 @@ show_status() {
   fi
 
   local completed=$(jq -r '.progress.completed' "$TASK_QUEUE_FILE")
-  local total=$(jq '.tasks | length' "$TASK_QUEUE_FILE")
+  local total=$(jq '(.tasks // .taskQueue) | length' "$TASK_QUEUE_FILE")
 
   echo ""
   echo "═══════════════════════════════════════"
@@ -154,7 +159,7 @@ show_status() {
   echo "  ✗ Failed:      $(jq -r '.progress.failed' "$TASK_QUEUE_FILE")"
   echo ""
   echo "  Tasks:"
-  jq -r '.tasks | sort_by(.priority) | .[] | "  [\(.status)] \(.id): \(.name)"' "$TASK_QUEUE_FILE"
+  jq -r '(.tasks // .taskQueue) | sort_by(.priority) | .[] | "  [\(.status // "pending")] \(.id): \(.name)"' "$TASK_QUEUE_FILE"
   echo ""
 }
 
@@ -227,11 +232,11 @@ case "$COMMAND" in
     fi
     ;;
   complete)
-    [ $# -lt 2 ] && { fail "Usage: $0 complete TASK_ID [result]"; exit 1; }
+    [ $# -lt 1 ] && { fail "Usage: $0 complete TASK_ID [result]"; exit 1; }
     complete_task "$1" "${2:-success}"
     ;;
   fail)
-    [ $# -lt 2 ] && { fail "Usage: $0 fail TASK_ID [reason]"; exit 1; }
+    [ $# -lt 1 ] && { fail "Usage: $0 fail TASK_ID [reason]"; exit 1; }
     fail_task "$1" "${2:-Unknown error}"
     ;;
   update)
