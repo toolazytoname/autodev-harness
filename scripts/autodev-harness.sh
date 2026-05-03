@@ -24,8 +24,8 @@ PROJECT_LOGS="${PROJECT_DIR}/logs"
 
 BRIEF=""
 PROJECT_TYPE="fullstack"
-PLANNER_MODEL="minimax-latest"
-GENERATOR_MODEL="minimax-latest"
+PLANNER_MODEL="MiniMax-M2.7"
+GENERATOR_MODEL="MiniMax-M2.7"
 MAX_ITERATIONS=15
 PASS_THRESHOLD=7.0
 DEV_PORT=3000
@@ -61,7 +61,7 @@ parse_args() {
       --help)
         echo "Usage: $0 \"brief\" [options]"
         echo "  --type TYPE        Project type: fullstack, frontend, api, library"
-        echo "  --model MODEL      AI model (default: minimax-latest)"
+        echo "  --model MODEL      AI model (default: MiniMax-M2.7)"
         echo "  --iterations N     Max GAN iterations (default: 15)"
         echo "  --threshold SCORE  Pass threshold 1-10 (default: 7.0)"
         echo "  --skip-planner     Skip planning phase"

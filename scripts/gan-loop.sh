@@ -77,7 +77,7 @@ run_generator() {
 
   log "Launching Generator (iteration $iteration)..."
 
-  effort=high claude -p --model minimax-latest --dangerously-skip-permissions \
+  effort=high claude -p --model MiniMax-M2.7 --dangerously-skip-permissions \
     "You are the Generator in a GAN-style harness.
 
 Iteration: $iteration
@@ -100,7 +100,7 @@ run_evaluator() {
 
   log "Launching Evaluator (iteration $iteration)..."
 
-  effort=high claude -p --model minimax-latest --dangerously-skip-permissions \
+  effort=high claude -p --model MiniMax-M2.7 --dangerously-skip-permissions \
     "You are the Evaluator in a GAN-style harness.
 
 Iteration: $iteration
