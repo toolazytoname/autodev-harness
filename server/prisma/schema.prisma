@@ -1,0 +1,139 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  avatar    String?
+  role      String   @default("student") // teacher or student
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Teacher relations
+  teacherId String?
+  teacher   User?    @relation("TeacherStudents", fields: [teacherId], references: [id])
+  students  User[]   @relation("TeacherStudents")
+
+  // Classes created by this teacher
+  createdClasses Class[] @relation("ClassTeacher")
+
+  // Student enrolled classes
+  enrolledClasses Class[] @relation("ClassStudents")
+
+  // Student relations
+  pets      Pet[]
+  items     Item[]
+  achievements UserAchievement[]
+
+  // Tasks assigned to this student
+  assignedTasks Task[] @relation("TaskCompletions")
+}
+
+model Class {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teacherId String
+  teacher   User     @relation("ClassTeacher", fields: [teacherId], references: [id])
+  students  User[]   @relation("ClassStudents")
+}
+
+model Pet {
+  id         String   @id @default(cuid())
+  name       String
+  type       String   @default("bear") // bear, rabbit, cat, dog
+  level      Int      @default(1)
+  exp        Int      @default(0)
+  expToNext  Int      @default(100)
+  hunger     Int      @default(100)  // 0-100
+  happiness  Int      @default(100)  // 0-100
+  stage      String   @default("young") // young, adult, mature
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  ownerId    String
+  owner      User     @relation(fields: [ownerId], references: [id])
+  items      PetItem[]
+}
+
+model Item {
+  id        String   @id @default(cuid())
+  type      String   // food, toy, book, star, trophy
+  name      String
+  emoji     String
+  effect    Int      @default(0)
+  quantity  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id])
+  petItems  PetItem[]
+}
+
+model PetItem {
+  id        String   @id @default(cuid())
+  petId     String
+  pet       Pet      @relation(fields: [petId], references: [id])
+  itemId    String
+  item      Item     @relation(fields: [itemId], references: [id])
+  assignedAt DateTime @default(now())
+
+  @@unique([petId, itemId])
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  expReward   Int      @default(0)
+  type        String   @default("daily") // daily, one-time, teacher-assigned
+  status      String   @default("pending") // pending, completed
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  studentId   String?
+  student     User?    @relation("TaskCompletions", fields: [studentId], references: [id])
+  itemRewards TaskItemReward[]
+}
+
+model TaskItemReward {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  itemType  String
+  itemName  String
+  itemEmoji String
+  quantity  Int      @default(1)
+}
+
+model Achievement {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  emoji       String
+  condition   String   // JSON condition string
+  rewardExp   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  users       UserAchievement[]
+}
+
+model UserAchievement {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  achievementId  String
+  achievement    Achievement @relation(fields: [achievementId], references: [id])
+  unlockedAt     DateTime @default(now())
+
+  @@unique([userId, achievementId])
+}
