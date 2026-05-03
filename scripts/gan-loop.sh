@@ -15,12 +15,15 @@ DEV_PORT="${GAN_DEV_SERVER_PORT:-3000}"
 DEV_CMD="${GAN_DEV_SERVER_CMD:-npm run dev}"
 EVAL_MODE="${GAN_EVAL_MODE:-playwright}"
 
-HARNESS_DIR="./autodev-harness"
-FEEDBACK_DIR="${HARNESS_DIR}/feedback/gan"
+HARNESS_DIR="${HARNESS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+PROJECT_DIR="${PROJECT_DIR:-$HARNESS_DIR}"
+export HARNESS_DIR PROJECT_DIR
+
+FEEDBACK_DIR="${PROJECT_DIR}/feedback/gan"
 SCREENSHOTS_DIR="${FEEDBACK_DIR}/screenshots"
 START_TIME=$(date +%s)
 
-mkdir -p "$FEEDBACK_DIR" "$SCREENSHOTS_DIR" "${HARNESS_DIR}/logs"
+mkdir -p "$FEEDBACK_DIR" "$SCREENSHOTS_DIR" "${PROJECT_DIR}/logs"
 
 # Colors
 RED='\033[0;31m'

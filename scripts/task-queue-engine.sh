@@ -16,8 +16,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="${HARNESS_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 export HARNESS_DIR
-TASK_QUEUE_FILE="${TASK_QUEUE_FILE:-$HARNESS_DIR/state/task-queue.json}"
+# PROJECT_DIR can be overridden by environment or passed as argument
 PROJECT_DIR="${PROJECT_DIR:-$HARNESS_DIR}"
+TASK_QUEUE_FILE="${TASK_QUEUE_FILE:-$PROJECT_DIR/state/task-queue.json}"
 
 # Colors
 RED='\033[0;31m'
@@ -223,6 +224,12 @@ case "$COMMAND" in
     show_status
     ;;
   run)
+    # Optional: first arg is project_dir if passed
+    if [ $# -gt 0 ] && [ -d "$1" ]; then
+      PROJECT_DIR="$1"
+      TASK_QUEUE_FILE="$PROJECT_DIR/state/task-queue.json"
+      shift
+    fi
     if [ $# -gt 0 ] && [[ "$1" == --task ]]; then
       task_id="$2"
       update_task "$task_id" '{"status": "in-progress"}'
@@ -232,6 +239,12 @@ case "$COMMAND" in
     fi
     ;;
   complete)
+    # Optional: first arg is project_dir if passed
+    if [ $# -ge 2 ] && [ -d "$2" ]; then
+      PROJECT_DIR="$2"
+      TASK_QUEUE_FILE="$PROJECT_DIR/state/task-queue.json"
+      set -- "$1" # keep task_id as $1, drop project_dir
+    fi
     [ $# -lt 1 ] && { fail "Usage: $0 complete TASK_ID [result]"; exit 1; }
     complete_task "$1" "${2:-success}"
     ;;

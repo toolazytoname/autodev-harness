@@ -11,8 +11,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="${HARNESS_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 export HARNESS_DIR
+
+# PROJECT_DIR is the project directory (defaults to HARNESS_DIR if not set)
+PROJECT_DIR="${PROJECT_DIR:-$HARNESS_DIR}"
+export PROJECT_DIR
+
 CONFIG_FILE="${HARNESS_DIR}/config/harness.config.json"
-TASK_QUEUE_FILE="${HARNESS_DIR}/state/task-queue.json"
+PROJECT_CONFIG="${PROJECT_DIR}/config/harness.config.json"
+PROJECT_SPEC="${PROJECT_DIR}/SPEC.md"
+PROJECT_STATE="${PROJECT_DIR}/state"
+PROJECT_LOGS="${PROJECT_DIR}/logs"
 
 BRIEF=""
 PROJECT_TYPE="fullstack"
@@ -71,9 +79,10 @@ parse_args() {
 
 setup() {
   log "Brief: ${CYAN}${BRIEF}${NC}"
-  mkdir -p "${HARNESS_DIR}"/{scripts,agents,state,config,quality/gates,feedback/{gan,reviews},tasks/{pending,in-progress,completed},logs}
+  mkdir -p "${PROJECT_DIR}"/{state,logs,quality/gates,feedback/{gan,reviews},tasks/{pending,in-progress,completed}}
+  mkdir -p "${HARNESS_DIR}"/{scripts,agents,config,logs}
 
-  cat > "$CONFIG_FILE" << EOF
+  cat > "$PROJECT_CONFIG" << EOF
 {
   "brief": "$BRIEF",
   "projectType": "$PROJECT_TYPE",
@@ -83,12 +92,12 @@ setup() {
   "startedAt": "$(date -Iseconds)"
 }
 EOF
-  "${HARNESS_DIR}/scripts/task-queue-engine.sh" init "$BRIEF"
+  "${HARNESS_DIR}/scripts/task-queue-engine.sh" init "$BRIEF" "$PROJECT_DIR"
   ok "Setup complete"
 }
 
 run_planner() {
-  if [ "$SKIP_PLANNER" = true ] && [ -f "${HARNESS_DIR}/SPEC.md" ]; then
+  if [ "$SKIP_PLANNER" = true ] && [ -f "${PROJECT_SPEC}" ]; then
     phase "PLANNING — SKIPPED"
     return 0
   fi
@@ -101,18 +110,18 @@ run_planner() {
 CRITICAL: You MUST write tasks to the JSON file using jq!
 
 Create files:
-1. Write to ${HARNESS_DIR}/SPEC.md - Full product spec with features, design, tech stack
-2. Write to ${HARNESS_DIR}/config/eval-rubric.md - Evaluation rubric
-3. CRITICAL: Add tasks to ${HARNESS_DIR}/state/task-queue.json using jq:
-   bash: jq '.tasks = [...]' -M \${HARNESS_DIR}/state/task-queue.json > tmp.json && mv tmp.json \${HARNESS_DIR}/state/task-queue.json
+1. Write to ${PROJECT_SPEC} - Full product spec with features, design, tech stack
+2. Write to ${PROJECT_DIR}/config/eval-rubric.md - Evaluation rubric
+3. CRITICAL: Add tasks to ${PROJECT_STATE}/task-queue.json using jq:
+   bash: jq '.tasks = [...]' -M \${PROJECT_STATE}/task-queue.json > tmp.json && mv tmp.json \${PROJECT_STATE}/task-queue.json
    Each task: {\"id\":\"TASK-001\",\"name\":\"Task Name\",\"status\":\"pending\",\"priority\":\"P0\",\"deps\":[]}
 
-Create 10-14 tasks. Write them to the JSON file!" 2>&1 | tee "${HARNESS_DIR}/logs/planner.log"
+Create 10-14 tasks. Write them to the JSON file!" 2>&1 | tee "${PROJECT_LOGS}/planner.log"
 
-  [ -f "${HARNESS_DIR}/SPEC.md" ] && ok "Plan generated" || fail "Planner failed"
+  [ -f "${PROJECT_SPEC}" ] && ok "Plan generated" || fail "Planner failed"
 
   # Verify tasks were created
-  task_count=$(jq '(.tasks // []) | length' "${HARNESS_DIR}/state/task-queue.json" 2>/dev/null || echo 0)
+  task_count=$(jq '(.tasks // []) | length' "${PROJECT_STATE}/task-queue.json" 2>/dev/null || echo 0)
   if [ "$task_count" -eq 0 ]; then
     warn "No tasks found in task-queue.json, creating default tasks"
     jq '.tasks = [
@@ -120,22 +129,22 @@ Create 10-14 tasks. Write them to the JSON file!" 2>&1 | tee "${HARNESS_DIR}/log
       {"id":"TASK-002","name":"Core Features","status":"pending","priority":"P0","deps":["TASK-001"]},
       {"id":"TASK-003","name":"UI Implementation","status":"pending","priority":"P1","deps":["TASK-001"]},
       {"id":"TASK-004","name":"Testing & Polish","status":"pending","priority":"P1","deps":["TASK-002","TASK-003"]}
-    ]' "${HARNESS_DIR}/state/task-queue.json" > tmp.json && mv tmp.json "${HARNESS_DIR}/state/task-queue.json"
+    ]' "${PROJECT_STATE}/task-queue.json" > tmp.json && mv tmp.json "${PROJECT_STATE}/task-queue.json"
   fi
 }
 
 run_tasks() {
   phase "PHASE 2: Task Execution"
   while true; do
-    task_output=$("${HARNESS_DIR}/scripts/task-queue-engine.sh" run 2>/dev/null)
+    task_output=$("${HARNESS_DIR}/scripts/task-queue-engine.sh" run "$PROJECT_DIR" 2>/dev/null)
     task_id=$(echo "$task_output" | grep -oE '[A-Z][A-Z0-9]*[-_]?[A-Z0-9]*' | grep -E '^[A-Z]{2,}[-_]?[0-9]+$' | head -1)
     [ -z "$task_id" ] && break
     log "━━━ Task: $task_id ━━━"
     effort=high claude -p --model "$GENERATOR_MODEL" --dangerously-skip-permissions \
-      "Implement task $task_id. Read ${HARNESS_DIR}/SPEC.md and ${HARNESS_DIR}/state/task-queue.json.
+      "Implement task $task_id. Read ${PROJECT_SPEC} and ${PROJECT_STATE}/task-queue.json.
 Run quality gates, commit changes." \
-      2>&1 | tee "${HARNESS_DIR}/logs/task-${task_id}.log"
-    "${HARNESS_DIR}/scripts/task-queue-engine.sh" complete "$task_id"
+      2>&1 | tee "${PROJECT_LOGS}/task-${task_id}.log"
+    "${HARNESS_DIR}/scripts/task-queue-engine.sh" complete "$task_id" "$PROJECT_DIR"
     if [ "$SKIP_GAN" = false ]; then
       "${HARNESS_DIR}/scripts/gan-loop.sh" || true
     fi
@@ -146,8 +155,8 @@ Run quality gates, commit changes." \
 finalize() {
   phase "PHASE 3: Finalization"
   "${HARNESS_DIR}/scripts/run-quality-gates.sh" all || warn "Some gates failed"
-  cat > "${HARNESS_DIR}/build-report.md" << EOF
-# AutoDevHarness Build Report
+  cat > "${PROJECT_DIR}/build-report.md" << EOF
+# Build Report
 **Brief:** $BRIEF
 **Completed:** $(date)
 EOF

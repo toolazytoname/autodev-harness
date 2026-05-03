@@ -15,7 +15,11 @@ set -euo pipefail
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
-GATES_DIR="${GAN_GATES_DIR:-./autodev-harness/quality/gates}"
+HARNESS_DIR="${HARNESS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+PROJECT_DIR="${PROJECT_DIR:-$HARNESS_DIR}"
+export HARNESS_DIR PROJECT_DIR
+
+GATES_DIR="${GAN_GATES_DIR:-$PROJECT_DIR/quality/gates}"
 GATE_TIMEOUT="${GAN_TIMEOUT:-300}"
 COVERAGE_THRESHOLD="${GAN_COVERAGE_THRESHOLD:-80}"
 
