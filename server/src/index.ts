@@ -137,7 +137,7 @@ app.post('/api/items/use', async (req, res) => {
     }
 
     // Update pet stats based on item type
-    let updateData: Record<string, number> = {};
+    let updateData: Record<string, number | string> = {};
     switch (item.type) {
       case 'food':
         updateData.hunger = Math.min(100, pet.hunger + item.effect);
