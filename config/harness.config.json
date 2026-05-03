@@ -1,48 +1,8 @@
 {
-  "brief": "",
-  "projectName": "",
+  "brief": "在教培行业，学生在或者小朋友在完成某项指定的任务以后，老师会给一点奖励。现在好像有些产品，会给小朋友领养个可爱的宠物动物。小朋友领领了奖励以后可以投喂，可以让那个动物成长升级。每个老师可以由自己的班级，用这个电子宠物的成长来激励孩子进步，孩子也很有成就感。希望宠物可以可爱，整体界面设计比较时尚，小朋友喜欢。",
   "projectType": "fullstack",
-  "language": "typescript",
-  "framework": "next",
-
-  "harness": {
-    "maxIterations": 15,
-    "passThreshold": 7.0,
-    "checkpointInterval": 5,
-    "parallelAgents": 2,
-    "executionMode": "sequential"
-  },
-
-  "gan": {
-    "enabled": true,
-    "maxCyclesPerTask": 5,
-    "plateauThreshold": 0.3,
-    "improvementRequired": true
-  },
-
-  "models": {
-    "planner": "opus",
-    "generator": "opus",
-    "evaluator": "opus"
-  },
-
-  "qualityGates": {
-    "lint": { "enabled": true, "timeout": 120, "blocking": true },
-    "build": { "enabled": true, "timeout": 300, "blocking": true },
-    "test": { "enabled": true, "timeout": 300, "blocking": true, "coverageThreshold": 80 },
-    "e2e": { "enabled": true, "timeout": 600, "blocking": false },
-    "security": { "enabled": true, "timeout": 180, "blocking": false }
-  },
-
-  "devServer": {
-    "port": 3000,
-    "command": "npm run dev",
-    "startupTimeout": 60
-  },
-
-  "context": {
-    "compactionThreshold": 150000,
-    "snapshotInterval": 5,
-    "retainSnapshots": 10
-  }
+  "models": { "planner": "MiniMax-M2.7", "generator": "MiniMax-M2.7" },
+  "harness": { "maxIterations": 15, "passThreshold": 7.0 },
+  "devServer": { "port": 3000, "command": "npm run dev" },
+  "startedAt": "2026-05-03T23:01:10+08:00"
 }
