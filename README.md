@@ -15,18 +15,21 @@ AI-Powered Development Framework with **Research → Plan → Develop** workflow
 Set up LLM configuration via environment variables:
 
 ```bash
-export ANTHROPIC_API_KEY="your-api-key"
-export ANTHROPIC_BASE_URL="https://api.minimaxi.com/anthropic"
-export ANTHROPIC_MODEL="MiniMax-M2.7"
+export AUTODEV_API_KEY="your-api-key"
+export AUTODEV_BASE_URL="https://api.minimaxi.com/anthropic"
+export AUTODEV_MODEL="MiniMax-M2.7"
 ```
+
+If not set, falls back to Claude Code's variables:
+- `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`
 
 ## Quick Start
 
 ```bash
 # 1. 设置环境变量
-export ANTHROPIC_API_KEY="your-api-key"
-export ANTHROPIC_BASE_URL="https://api.minimaxi.com/anthropic"
-export ANTHROPIC_MODEL="MiniMax-M2.7"
+export AUTODEV_API_KEY="your-api-key"
+export AUTODEV_BASE_URL="https://api.minimaxi.com/anthropic"
+export AUTODEV_MODEL="MiniMax-M2.7"
 
 # 2. 进入项目目录，用 -- 分隔描述内容（自动创建 000-brief.md）
 cd /path/to/project
@@ -63,13 +66,13 @@ LLM OPTIONS:
 
 ## LLM Configuration
 
-Priority: CLI args > Environment variables > Defaults
+Priority: CLI args > AUTODEV_* env > ANTHROPIC_* env > Defaults
 
 | Variable | Default |
 |----------|---------|
-| ANTHROPIC_API_KEY | (required) |
-| ANTHROPIC_BASE_URL | https://api.minimaxi.com/anthropic |
-| ANTHROPIC_MODEL | MiniMax-M2.7 |
+| AUTODEV_API_KEY | (required) |
+| AUTODEV_BASE_URL | https://api.minimaxi.com/anthropic |
+| AUTODEV_MODEL | MiniMax-M2.7 |
 
 ## Workflow
 
