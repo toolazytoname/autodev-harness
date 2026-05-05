@@ -1,13 +1,18 @@
 #!/bin/bash
 # LLM Configuration - Simple model/key/url config
-# Defaults from environment variables (like Claude Code)
 
 LLM_MODEL=""; LLM_API_KEY=""; LLM_URL=""
 
 load_config_env() {
-    [[ -n "$ANTHROPIC_MODEL" ]] && LLM_MODEL="$ANTHROPIC_MODEL"
-    [[ -n "$ANTHROPIC_API_KEY" ]] && LLM_API_KEY="$ANTHROPIC_API_KEY"
-    [[ -n "$ANTHROPIC_BASE_URL" ]] && LLM_URL="$ANTHROPIC_BASE_URL"
+    # First check harness-specific variables
+    [[ -n "$AUTODEV_MODEL" ]] && LLM_MODEL="$AUTODEV_MODEL"
+    [[ -n "$AUTODEV_API_KEY" ]] && LLM_API_KEY="$AUTODEV_API_KEY"
+    [[ -n "$AUTODEV_BASE_URL" ]] && LLM_URL="$AUTODEV_BASE_URL"
+
+    # Fall back to Claude Code variables if not set
+    [[ -n "$LLM_MODEL" ]] || [[ -n "$ANTHROPIC_MODEL" ]] && LLM_MODEL="${ANTHROPIC_MODEL:-}"
+    [[ -n "$LLM_API_KEY" ]] || [[ -n "$ANTHROPIC_API_KEY" ]] && LLM_API_KEY="${ANTHROPIC_API_KEY:-}"
+    [[ -n "$LLM_URL" ]] || [[ -n "$ANTHROPIC_BASE_URL" ]] && LLM_URL="${ANTHROPIC_BASE_URL:-}"
 }
 
 set_defaults() {
