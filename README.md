@@ -30,17 +30,14 @@ EOF
 ## Quick Start
 
 ```bash
-# New project
+cd /path/to/project          # 进入你的项目目录
+/path/to/autodev-harness.sh  # 运行 harness（使用当前目录）
+
+# 或者传入项目路径
 ./autodev-harness.sh /path/to/project
-
-# Test mode (quick validation)
-./autodev-harness.sh --test /path/to/test-project
-
-# Iterate on existing project
-./autodev-harness.sh --iterate /path/to/existing-project
-
-# Continue from checkpoint
-./autodev-harness.sh -c /path/to/project
+./autodev-harness.sh --test # 测试模式
+./autodev-harness.sh --iterate  # 迭代模式
+./autodev-harness.sh -c     # 从检查点继续
 ```
 
 ## LLM Configuration
@@ -49,19 +46,18 @@ Priority: CLI args > Environment > Config file > Defaults
 
 ```bash
 # CLI options
-./autodev-harness.sh --provider openai --llm-key sk-xxx /path
+./autodev-harness.sh --model claude-3-5-sonnet-4-7 --llm-key sk-xxx --llm-url https://api.anthropic.com
 
 # Environment variables
-export ANTHROPIC_API_KEY=xxx
-export OPENAI_API_KEY=xxx
-export OLLAMA_API_KEY=xxx
+export LLM_MODEL=claude-3-5-sonnet-4-7
+export LLM_API_KEY=xxx
+export LLM_URL=https://api.anthropic.com
 
 # Config file (~/.autodev-harness/config.json)
 {
-  "provider": "anthropic",
-  "url": "https://api.anthropic.com",
-  "api_key": "${ANTHROPIC_API_KEY}",
-  "model": "claude-3-5-sonnet-4-7"
+  "model": "claude-3-5-sonnet-4-7",
+  "api_key": "${LLM_API_KEY}",
+  "url": "https://api.anthropic.com"
 }
 ```
 
@@ -89,15 +85,11 @@ Development Loop (Generator → Evaluator)
 | `iterate` | 10 | 7.0 | Bug fix / feature |
 | `test` | 3 | 5.0 | Quick validation |
 
-## Supported LLM Providers
+## Default LLM Settings
 
-| Provider | URL | Default Model |
-|----------|-----|--------------|
-| anthropic | api.anthropic.com | claude-3-5-sonnet-4-7 |
-| openai | api.openai.com/v1 | gpt-4o |
-| ollama | localhost:11434 | llama3 |
-| groq | api.groq.com | llama-3.1-70b |
-| deepseek | api.deepseek.com | deepseek-chat |
+| Model | URL |
+|-------|-----|
+| claude-3-5-sonnet-4-7 | https://api.anthropic.com |
 
 ## Project Structure
 
