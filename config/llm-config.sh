@@ -25,9 +25,9 @@ load_config_env() {
 }
 
 set_defaults() {
-    [[ -z "$LLM_PROVIDER" ]] && LLM_PROVIDER="anthropic"
-    [[ -z "$LLM_URL" ]] && LLM_URL=$(get_provider_info "$LLM_PROVIDER" "url")
-    [[ -z "$LLM_MODEL" ]] && LLM_MODEL=$(get_provider_info "$LLM_PROVIDER" "model")
+    [[ -n "$LLM_PROVIDER" ]] || LLM_PROVIDER="anthropic"
+    [[ -n "$LLM_URL" ]] || LLM_URL=$(get_provider_info "$LLM_PROVIDER" "url")
+    [[ -n "$LLM_MODEL" ]] || LLM_MODEL=$(get_provider_info "$LLM_PROVIDER" "model")
 }
 
 load_llm_config() {
@@ -46,7 +46,7 @@ apply_cli_config() {
             *) shift ;;
         esac
     done
-    [[ -z "$LLM_URL" ]] && LLM_URL=$(get_provider_info "$LLM_PROVIDER" "url")
+    [[ -n "$LLM_URL" ]] || LLM_URL=$(get_provider_info "$LLM_PROVIDER" "url")
 }
 
 show_llm_config() {

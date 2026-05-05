@@ -51,12 +51,13 @@ save_state() {
     local prev_phase="$CURRENT_PHASE"
 
     # Build files section without leading digits in keys (bash source compatibility)
-    local brief_path="${STATE_FILES[brief]:-$PROJECT_DIR/000-brief.md}"
-    local research_path="${STATE_FILES[research]:-$PROJECT_DIR/001-research-report.md}"
-    local plan_path="${STATE_FILES[plan]:-$PROJECT_DIR/002-plan.md}"
-    local tasks_path="${STATE_FILES[tasks]:-$PROJECT_DIR/003-task-queue.json}"
-    local spec_path="${STATE_FILES[spec]:-$PROJECT_DIR/004-spec.md}"
-    local rubric_path="${STATE_FILES[rubric]:-$PROJECT_DIR/005-eval-rubric.md}"
+    # Use simple path construction to avoid any parsing issues
+    brief_path="$PROJECT_DIR/000-brief.md"
+    research_path="$PROJECT_DIR/001-research-report.md"
+    plan_path="$PROJECT_DIR/002-plan.md"
+    tasks_path="$PROJECT_DIR/003-task-queue.json"
+    spec_path="$PROJECT_DIR/004-spec.md"
+    rubric_path="$PROJECT_DIR/005-eval-rubric.md"
 
     cat > "$state_file" <<EOF
 {

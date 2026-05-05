@@ -86,7 +86,7 @@ parse_args() {
     apply_cli_config "$@"
 
     # Default to current directory
-    [[ -z "$PROJECT_DIR" ]] && PROJECT_DIR="$PWD"
+    [[ -n "$PROJECT_DIR" ]] || PROJECT_DIR="$PWD"
 }
 
 # === Mode Configuration ===
