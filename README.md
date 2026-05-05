@@ -12,30 +12,12 @@ AI-Powered Development Framework with **Research → Plan → Develop** workflow
 
 ## Prerequisites
 
-Before running, set up your LLM configuration via environment variables:
+Set up LLM configuration via environment variables:
 
 ```bash
 export ANTHROPIC_API_KEY="your-api-key"
 export ANTHROPIC_BASE_URL="https://api.minimaxi.com/anthropic"
 export ANTHROPIC_MODEL="MiniMax-M2.7"
-```
-
-These are the only required configurations. All other settings are optional.
-
-## Input Your Project Brief
-
-Create a `000-brief.md` file in your project directory:
-
-```bash
-mkdir my-project && cd my-project
-cat > 000-brief.md << 'EOF'
-# 项目需求描述
-
-[在这里描述你的项目需求]
-
-示例：我要开发一个宠物养成系统，
-用户可以领养虚拟宠物，喂养并看着它成长升级。
-EOF
 ```
 
 ## Quick Start
@@ -46,40 +28,57 @@ export ANTHROPIC_API_KEY="your-api-key"
 export ANTHROPIC_BASE_URL="https://api.minimaxi.com/anthropic"
 export ANTHROPIC_MODEL="MiniMax-M2.7"
 
-# 2. 进入项目目录并运行
+# 2. 进入项目目录，用 -- 分隔描述内容（自动创建 000-brief.md）
+cd /path/to/project
+/path/to/autodev-harness.sh -- "我要开发一个宠物养成系统"
+
+# 或者已有 000-brief.md，直接运行
 cd /path/to/project
 /path/to/autodev-harness.sh
 
 # 其他模式
-./autodev-harness.sh --test      # 测试模式 (3次迭代)
-./autodev-harness.sh --iterate   # 迭代模式 (10次迭代)
-./autodev-harness.sh -c          # 从检查点继续
+./autodev-harness.sh --test -- "快速验证任务"
+./autodev-harness.sh --iterate -- "修复登录bug"
+./autodev-harness.sh -c        # 从检查点继续
+```
+
+## Usage
+
+```bash
+./autodev-harness.sh [OPTIONS] [PROJECT_DIR] -- PROJECT_DESCRIPTION
+
+OPTIONS:
+    --new           New project mode (default)
+    --iterate       Iterate on existing project (bug fix / feature)
+    --test          Test mode (quick validation)
+    -c, --continue  Continue from checkpoint
+    --status        Show project status
+    --restart       Restart from beginning
+
+LLM OPTIONS:
+    --llm-key KEY   Override API key
+    --llm-url URL   Override API URL
+    --model MODEL   Override model name
 ```
 
 ## LLM Configuration
 
 Priority: CLI args > Environment variables > Defaults
 
-```bash
-# CLI options (会覆盖环境变量)
-./autodev-harness.sh --model MiniMax-M2.7 --llm-key sk-xxx --llm-url https://api.minimaxi.com/anthropic
-```
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| ANTHROPIC_API_KEY | (none) | API key for LLM provider |
-| ANTHROPIC_BASE_URL | https://api.minimaxi.com/anthropic | API endpoint |
-| ANTHROPIC_MODEL | MiniMax-M2.7 | Model name |
+| Variable | Default |
+|----------|---------|
+| ANTHROPIC_API_KEY | (required) |
+| ANTHROPIC_BASE_URL | https://api.minimaxi.com/anthropic |
+| ANTHROPIC_MODEL | MiniMax-M2.7 |
 
 ## Workflow
 
 ```
-000-brief.md               ← User input (required)
+PROJECT_DESCRIPTION  ← User input (via CLI -- or 000-brief.md)
     ↓
+000-brief.md               ← Created automatically from CLI
 001-research-report.md     ← Research (competitive analysis)
-    ↓
 002-plan.md               ← Plan (user confirms)
-    ↓
 003-task-queue.json       ← Tasks (auto-generated)
     ↓
 Development Loop (Generator → Evaluator)
@@ -107,17 +106,3 @@ autodev-harness/
 ## License
 
 MIT
-
----
-
-## 参考资料
-
-- [Anthropic: Harness Design for Long-Running Applications](https://www.anthropic.com/engineering/harness-design-long-running-apps)
-- [GAN-Style Harness Skill](https://github.com/everything-claude-code/everything-claude-code)
-- [Auto Coding Agent Demo](https://github.com/SamuelQZQ/auto-coding-agent-demo)
-
----
-
-## 许可证
-
-MIT License
