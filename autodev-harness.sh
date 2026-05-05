@@ -30,7 +30,7 @@ load_llm_config
 # === Usage ===
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [OPTIONS] [PROJECT_DIR]
+Usage: $(basename "$0") [OPTIONS] [PROJECT_DIR] [-- PROJECT_DESCRIPTION]
 
 OPTIONS:
     --new           New project mode (default)
@@ -47,16 +47,24 @@ LLM OPTIONS:
     --model MODEL        Model name
 
 EXAMPLES:
-    $(basename "$0") /path/to/new-project
-    $(basename "$0") --iterate /path/to/existing-project
-    $(basename "$0") --test /path/to/test-project
-    $(basename "$0") -c /path/to/project  # Resume
-    $(basename "$0") --provider openai /path/to/project
+    # Run with project description (creates 000-brief.md automatically)
+    $(basename "$0") /path/to/project -- "我要开发一个宠物养成系统"
+
+    # Run in project directory with existing 000-brief.md
+    cd /path/to/project
+    $(basename "$0")
+
+    # Test mode
+    $(basename "$0") --test /path/to/project -- "Quick validation task"
+
+    # Continue from checkpoint
+    $(basename "$0") -c /path/to/project
 EOF
 }
 
 # === Parse Arguments ===
 parse_args() {
+    local args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --new) MODE="new"; shift ;;
@@ -66,9 +74,11 @@ parse_args() {
             --status) ACTION="status"; shift ;;
             --restart) ACTION="restart"; shift ;;
             --max-iterations) MAX_ITERATIONS="$2"; shift 2 ;;
+            --llm-key) LLM_API_KEY="$2"; shift 2 ;;
             --llm-url) LLM_URL="$2"; shift 2 ;;
             --model) LLM_MODEL="$2"; shift 2 ;;
             -h|--help) usage; exit 0 ;;
+            --) shift; BRIEF_ARGS="$@"; break ;;
             -*) error "Unknown option: $1" ;;
             *) PROJECT_DIR="$1"; shift ;;
         esac
@@ -79,6 +89,25 @@ parse_args() {
 
     # Default to current directory
     [[ -n "$PROJECT_DIR" ]] || PROJECT_DIR="$PWD"
+}
+
+# === Create Brief from CLI ===
+create_brief_from_args() {
+    local brief="$PROJECT_DIR/000-brief.md"
+    # Check if brief already exists
+    [[ -f "$brief" ]] && return 0
+
+    # If brief args exist, use them as brief content
+    [[ -z "$BRIEF_ARGS" ]] && return 0
+
+    log "Creating 000-brief.md from input..."
+    cat > "$brief" <<EOF
+# 项目需求
+
+$BRIEF_ARGS
+
+EOF
+    log "Brief created: $brief"
 }
 
 # === Mode Configuration ===
@@ -293,6 +322,9 @@ main() {
 
     # Check/create project directory
     ensure_project_dir
+
+    # Create brief from remaining args if provided
+    create_brief_from_args "$@"
 
     # Check for existing state
     if load_state; then
