@@ -107,7 +107,7 @@ confirm_plan() {
 
         case "$choice" in
             1)
-                log "Please edit $plan_file and run again"
+                log "Edit $plan_file and run: ./autodev-harness.sh -c $PROJECT_DIR"
                 return 1
                 ;;
             2)
