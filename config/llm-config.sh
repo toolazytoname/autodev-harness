@@ -23,6 +23,8 @@ set_defaults() {
 }
 
 load_llm_config() {
+    # Load from harness config directory first
+    load_config_file "$SCRIPT_DIR/config/llm-config.json"
     load_config_file ".autodev-harness/config.json"
     load_config_file "$HOME/.autodev-harness/config.json"
     load_config_env
