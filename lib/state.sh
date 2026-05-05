@@ -21,8 +21,8 @@ load_state() {
     CURRENT_PHASE=$(grep '"currentPhase"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/')
     ITERATION_COUNT=$(grep '"iterationCount"' "$state_file" | sed 's/.*: *\([0-9]*\).*/\1/')
 
-    # Source the state file
-    source <(grep -E '^\s+[a-zA-Z_]+=' "$state_file" | sed 's/: */=/')
+    # Source the state file (ignore errors from malformed lines)
+    source <(grep -E '^\s+[a-zA-Z_]+=' "$state_file" 2>/dev/null | sed 's/: */=/') || true
 
     return 0
 }

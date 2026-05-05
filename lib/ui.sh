@@ -24,13 +24,17 @@ success() {
 # === User Confirmation ===
 confirm() {
     local question="$1"
-    local response
+    local response=""
 
-    read -p "$question [y/n]: " response
+    if [[ ! -t 0 ]] && ! read -p "$question [y/n]: " response 2>/dev/null; then
+        # Non-interactive mode: auto-approve
+        return 0
+    fi
     [[ "$response" =~ ^[Yy]$ ]]
 }
 
 # === Confirm Plan ===
+# Returns: 0 = approved, 1 = rejected/cancelled
 confirm_plan() {
     local plan_file="$1"
 
@@ -57,16 +61,17 @@ confirm_plan() {
         case "$choice" in
             1)
                 log "Please edit $plan_file and run again"
-                exit 0
+                return 1
                 ;;
             2)
                 log "Cancelled"
-                exit 0
+                return 1
                 ;;
         esac
     fi
 
     log "Plan approved!"
+    return 0
 }
 
 # === Spinner ===
