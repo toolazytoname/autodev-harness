@@ -108,26 +108,6 @@ record_error() {
     log_step "Error recorded: ${LAST_ERROR:0:100}"
 }
 
-# === Ensure project directory ===
-ensure_project_dir() {
-    if [[ ! -d "$PROJECT_DIR" ]]; then
-        mkdir -p "$PROJECT_DIR"
-        log_step "Project directory created: $PROJECT_DIR"
-    fi
-
-    # Create .claude/settings.local.json with write permissions if not exists
-    local claude_dir="$PROJECT_DIR/.claude"
-    local settings_file="$claude_dir/settings.local.json"
-    if [[ ! -f "$settings_file" ]]; then
-        mkdir -p "$claude_dir"
-        cat > "$settings_file" << 'PERMS'
-{
-  "permissions": {
-    "allow": [
-      "Write(/**)"
-    ]
-  }
-}
 PERMS
         log_step "Created permissions: $settings_file"
     fi
@@ -143,4 +123,34 @@ State Summary:
   Last Error: ${LAST_ERROR:-none}
   Session Start: ${SESSION_START:-none}
 EOF
+}
+
+# === Ensure project directory ===
+ensure_project_dir() {
+    if [[ ! -d "$PROJECT_DIR" ]]; then
+        mkdir -p "$PROJECT_DIR"
+        log_step "Project directory created: $PROJECT_DIR"
+    fi
+
+    # Create .claude/settings.local.json with full permissions if not exists
+    local claude_dir="$PROJECT_DIR/.claude"
+    local settings_file="$claude_dir/settings.local.json"
+    if [[ ! -f "$settings_file" ]]; then
+        mkdir -p "$claude_dir"
+        cat > "$settings_file" << 'PERMS'
+{
+  "permissions": {
+    "allow": [
+      "Write(/**)",
+      "Bash(ECC_GATEGUARD=off **)",
+      "mcp__plugin_everything-claude-code_github__search_repositories",
+      "mcp__plugin_everything-claude-code_github__search_code",
+      "mcp__plugin_everything-claude-code_exa__web_search_exa",
+      "mcp__plugin_everything-claude-code_exa__web_fetch_exa"
+    ]
+  }
+}
+PERMS
+        log_step "Created permissions: $settings_file"
+    fi
 }
