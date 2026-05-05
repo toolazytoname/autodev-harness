@@ -1,32 +1,21 @@
 #!/bin/bash
 # LLM Configuration - Simple model/key/url config
+# Defaults from environment variables (like Claude Code)
 
 LLM_MODEL=""; LLM_API_KEY=""; LLM_URL=""
 
-load_config_file() {
-    local cf="$1"
-    [[ ! -f "$cf" ]] && return 0
-    LLM_MODEL=$(grep -m1 '"model"' "$cf" 2>/dev/null | sed 's/.*: *"\([^"]*\)".*/\1/')
-    LLM_API_KEY=$(grep -m1 '"api_key"' "$cf" 2>/dev/null | sed 's/.*: *"\([^"]*\)".*/\1/')
-    LLM_URL=$(grep -m1 '"url"' "$cf" 2>/dev/null | sed 's/.*: *"\([^"]*\)".*/\1/')
-}
-
 load_config_env() {
-    [[ -n "$LLM_MODEL" ]] || LLM_MODEL="${LLM_MODEL:-}"
-    [[ -n "$LLM_API_KEY" ]] || LLM_API_KEY="${LLM_API_KEY:-}"
-    [[ -n "$LLM_URL" ]] || LLM_URL="${LLM_URL:-}"
+    [[ -n "$ANTHROPIC_MODEL" ]] && LLM_MODEL="$ANTHROPIC_MODEL"
+    [[ -n "$ANTHROPIC_API_KEY" ]] && LLM_API_KEY="$ANTHROPIC_API_KEY"
+    [[ -n "$ANTHROPIC_BASE_URL" ]] && LLM_URL="$ANTHROPIC_BASE_URL"
 }
 
 set_defaults() {
-    [[ -n "$LLM_MODEL" ]] || LLM_MODEL="claude-3-5-sonnet-4-7"
-    [[ -n "$LLM_URL" ]] || LLM_URL="https://api.anthropic.com"
+    [[ -n "$LLM_MODEL" ]] || LLM_MODEL="MiniMax-M2.7"
+    [[ -n "$LLM_URL" ]] || LLM_URL="https://api.minimaxi.com/anthropic"
 }
 
 load_llm_config() {
-    # Load from harness config directory first
-    load_config_file "$SCRIPT_DIR/config/llm-config.json"
-    load_config_file ".autodev-harness/config.json"
-    load_config_file "$HOME/.autodev-harness/config.json"
     load_config_env
     set_defaults
 }
