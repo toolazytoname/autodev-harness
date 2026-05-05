@@ -50,6 +50,14 @@ save_state() {
     # Get previous state for comparison
     local prev_phase="$CURRENT_PHASE"
 
+    # Build files section without leading digits in keys (bash source compatibility)
+    local brief_path="${STATE_FILES[brief]:-$PROJECT_DIR/000-brief.md}"
+    local research_path="${STATE_FILES[research]:-$PROJECT_DIR/001-research-report.md}"
+    local plan_path="${STATE_FILES[plan]:-$PROJECT_DIR/002-plan.md}"
+    local tasks_path="${STATE_FILES[tasks]:-$PROJECT_DIR/003-task-queue.json}"
+    local spec_path="${STATE_FILES[spec]:-$PROJECT_DIR/004-spec.md}"
+    local rubric_path="${STATE_FILES[rubric]:-$PROJECT_DIR/005-eval-rubric.md}"
+
     cat > "$state_file" <<EOF
 {
   "projectDir": "$PROJECT_DIR",
@@ -63,12 +71,12 @@ save_state() {
   "lastError": "${LAST_ERROR:-}",
   "updatedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "files": {
-    "000-brief": "${STATE_FILES[brief]:-$PROJECT_DIR/000-brief.md}",
-    "001-research": "${STATE_FILES[research]:-$PROJECT_DIR/001-research-report.md}",
-    "002-plan": "${STATE_FILES[plan]:-$PROJECT_DIR/002-plan.md}",
-    "003-tasks": "${STATE_FILES[tasks]:-$PROJECT_DIR/003-task-queue.json}",
-    "004-spec": "${STATE_FILES[spec]:-$PROJECT_DIR/004-spec.md}",
-    "005-rubric": "${STATE_FILES[rubric]:-$PROJECT_DIR/005-eval-rubric.md}"
+    "brief": "$brief_path",
+    "research": "$research_path",
+    "plan": "$plan_path",
+    "tasks": "$tasks_path",
+    "spec": "$spec_path",
+    "rubric": "$rubric_path"
   }
 }
 EOF
