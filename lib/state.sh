@@ -47,11 +47,8 @@ save_state() {
     local completed_str=$(IFS=','; echo "${COMPLETED_PHASES[*]}")
     [[ -z "$completed_str" ]] && completed_str="$next_phase"
 
-    # Get previous state for comparison
     local prev_phase="$CURRENT_PHASE"
 
-    # Build files section without leading digits in keys (bash source compatibility)
-    # Use simple path construction to avoid any parsing issues
     brief_path="$PROJECT_DIR/000-brief.md"
     research_path="$PROJECT_DIR/001-research-report.md"
     plan_path="$PROJECT_DIR/002-plan.md"
@@ -108,23 +105,6 @@ record_error() {
     log_step "Error recorded: ${LAST_ERROR:0:100}"
 }
 
-PERMS
-        log_step "Created permissions: $settings_file"
-    fi
-}
-
-# === Get state summary ===
-get_state_summary() {
-    cat <<EOF
-State Summary:
-  Current Phase: ${CURRENT_PHASE:-none}
-  Completed: ${COMPLETED_PHASES[*]:-none}
-  Iterations: ${ITERATION_COUNT:-0}
-  Last Error: ${LAST_ERROR:-none}
-  Session Start: ${SESSION_START:-none}
-EOF
-}
-
 # === Ensure project directory ===
 ensure_project_dir() {
     if [[ ! -d "$PROJECT_DIR" ]]; then
@@ -132,12 +112,11 @@ ensure_project_dir() {
         log_step "Project directory created: $PROJECT_DIR"
     fi
 
-    # Create .claude/settings.local.json with full permissions if not exists
     local claude_dir="$PROJECT_DIR/.claude"
     local settings_file="$claude_dir/settings.local.json"
     if [[ ! -f "$settings_file" ]]; then
         mkdir -p "$claude_dir"
-        cat > "$settings_file" << 'PERMS'
+        cat > "$settings_file" <<'PERMS'
 {
   "permissions": {
     "allow": [
@@ -153,4 +132,16 @@ ensure_project_dir() {
 PERMS
         log_step "Created permissions: $settings_file"
     fi
+}
+
+# === Get state summary ===
+get_state_summary() {
+    cat <<EOF
+State Summary:
+  Current Phase: ${CURRENT_PHASE:-none}
+  Completed: ${COMPLETED_PHASES[*]:-none}
+  Iterations: ${ITERATION_COUNT:-0}
+  Last Error: ${LAST_ERROR:-none}
+  Session Start: ${SESSION_START:-none}
+EOF
 }
