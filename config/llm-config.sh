@@ -1,16 +1,20 @@
 #!/bin/bash
 # LLM Configuration - Priority-based config loader
-source "$(dirname "$0")/providers.sh"
+PROVIDERS_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/providers.sh"
+source "$PROVIDERS_SH"
 
 LLM_PROVIDER=""; LLM_URL=""; LLM_API_KEY=""; LLM_MODEL=""
 
 load_config_file() {
     local cf="$1"
-    [[ ! -f "$cf" ]] && return 1
+    if [[ ! -f "$cf" ]]; then
+        return 0
+    fi
     LLM_PROVIDER=$(grep -m1 "\"provider\"" "$cf" 2>/dev/null | sed "s/.*: *\"\([^\"]*\)\".*/\1/")
     LLM_URL=$(grep -m1 "\"url\"" "$cf" 2>/dev/null | sed "s/.*: *\"\([^\"]*\)\".*/\1/")
     LLM_API_KEY=$(grep -m1 "\"api_key\"" "$cf" 2>/dev/null | sed "s/.*: *\"\([^\"]*\)\".*/\1/")
     LLM_MODEL=$(grep -m1 "\"model\"" "$cf" 2>/dev/null | sed "s/.*: *\"\([^\"]*\)\".*/\1/")
+    return 0
 }
 
 load_config_env() {
