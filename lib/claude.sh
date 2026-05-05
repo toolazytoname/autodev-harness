@@ -17,7 +17,7 @@ call_claude() {
     log_step "┌─ Agent call: $agent"
     log_step "│  Input: ${input:-stdin}"
     log_step "│  Output: ${output:-stdout}"
-    log_step "│  Model: ${LLM_MODEL:-claude-3-5-sonnet-4-7}"
+    log_step "│  Model: ${LLM_MODEL:-MiniMax-M2.7}"
 
     if [[ ! -f "$agent_file" ]]; then
         log_error "│  ✗ Agent file not found: $agent_file"
@@ -44,14 +44,28 @@ call_claude() {
 
     while [[ $attempt -le $MAX_RETRIES ]]; do
         log_step "│  Attempt $attempt/$MAX_RETRIES..."
+        log_step "│  ▶ Starting agent..."
 
         local start_time=$(date +%s)
 
         if [[ -n "$output" ]]; then
-            ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-claude-3-5-sonnet-4-7}" > "$output" 2>&1
+            # Run with output streaming - show progress every 10 seconds
+            {
+                ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-MiniMax-M2.7}" 2>&1
+            } | tee "$output" &
+            local pid=$!
+            
+            # Show progress while running
+            while kill -0 $pid 2>/dev/null; do
+                log_step "│  ⏳ Agent running... (pid: $pid)"
+                sleep 10
+            done
+            
+            # Wait for completion
+            wait $pid
             exit_code=$?
         else
-            ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-claude-3-5-sonnet-4-7}" 2>&1
+            ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-MiniMax-M2.7}" 2>&1
             exit_code=$?
         fi
 
@@ -59,16 +73,15 @@ call_claude() {
         local duration=$((end_time - start_time))
 
         if [[ $exit_code -eq 0 ]]; then
-            log_step "│  ✓ Success in ${duration}s"
+            log_step "│  ✓ Completed in ${duration}s"
             break
         else
-            last_error=$(cat "$output" 2>/dev/null | tail -5)
+            last_error=$(cat "$output" 2>/dev/null | tail -10 | head -5)
             log_step "│  ✗ Failed in ${duration}s (exit: $exit_code)"
+            log_step "│  ↺ Retrying in ${RETRY_BASE_DELAY}s..."
 
             if [[ $attempt -lt $MAX_RETRIES ]]; then
-                local delay=$((RETRY_BASE_DELAY * attempt))
-                log_step "│  ↺ Retrying in ${delay}s..."
-                sleep $delay
+                sleep $RETRY_BASE_DELAY
             fi
         fi
 
@@ -79,7 +92,6 @@ call_claude() {
 
     if [[ $exit_code -ne 0 ]]; then
         log_error "│  ✗ All $MAX_RETRIES attempts failed"
-        log_error "│  Last error: ${last_error:0:200}"
         return $exit_code
     fi
 
