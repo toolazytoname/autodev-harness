@@ -8,12 +8,23 @@ AI-Powered Development Framework with **Research → Plan → Develop** workflow
 - **Research Phase**: Competitive analysis with best practices
 - **Interactive Plan**: User confirmation before development
 - **Resumable**: Continue from checkpoint
-- **Multi-Provider LLM**: Anthropic, OpenAI, Ollama, Groq, DeepSeek
 - **ECC Integration**: Uses everything-claude-code commands
+
+## Prerequisites
+
+Before running, set up your LLM configuration via environment variables:
+
+```bash
+export ANTHROPIC_API_KEY="your-api-key"
+export ANTHROPIC_BASE_URL="https://api.minimaxi.com/anthropic"
+export ANTHROPIC_MODEL="MiniMax-M2.7"
+```
+
+These are the only required configurations. All other settings are optional.
 
 ## Input Your Project Brief
 
-Before running the harness, create a `000-brief.md` file in your project directory:
+Create a `000-brief.md` file in your project directory:
 
 ```bash
 mkdir my-project && cd my-project
@@ -30,49 +41,46 @@ EOF
 ## Quick Start
 
 ```bash
-cd /path/to/project          # 进入你的项目目录
-/path/to/autodev-harness.sh  # 运行 harness（使用当前目录）
+# 1. 设置环境变量
+export ANTHROPIC_API_KEY="your-api-key"
+export ANTHROPIC_BASE_URL="https://api.minimaxi.com/anthropic"
+export ANTHROPIC_MODEL="MiniMax-M2.7"
 
-# 或者传入项目路径
-./autodev-harness.sh /path/to/project
-./autodev-harness.sh --test # 测试模式
-./autodev-harness.sh --iterate  # 迭代模式
-./autodev-harness.sh -c     # 从检查点继续
+# 2. 进入项目目录并运行
+cd /path/to/project
+/path/to/autodev-harness.sh
+
+# 其他模式
+./autodev-harness.sh --test      # 测试模式 (3次迭代)
+./autodev-harness.sh --iterate   # 迭代模式 (10次迭代)
+./autodev-harness.sh -c          # 从检查点继续
 ```
 
 ## LLM Configuration
 
-Priority: CLI args > Environment > Config file > Defaults
+Priority: CLI args > Environment variables > Defaults
 
 ```bash
-# CLI options
-./autodev-harness.sh --model claude-3-5-sonnet-4-7 --llm-key sk-xxx --llm-url https://api.anthropic.com
-
-# Environment variables
-export LLM_MODEL=claude-3-5-sonnet-4-7
-export LLM_API_KEY=xxx
-export LLM_URL=https://api.anthropic.com
-
-# Config file (~/.autodev-harness/config.json)
-{
-  "model": "claude-3-5-sonnet-4-7",
-  "api_key": "${LLM_API_KEY}",
-  "url": "https://api.anthropic.com"
-}
+# CLI options (会覆盖环境变量)
+./autodev-harness.sh --model MiniMax-M2.7 --llm-key sk-xxx --llm-url https://api.minimaxi.com/anthropic
 ```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| ANTHROPIC_API_KEY | (none) | API key for LLM provider |
+| ANTHROPIC_BASE_URL | https://api.minimaxi.com/anthropic | API endpoint |
+| ANTHROPIC_MODEL | MiniMax-M2.7 | Model name |
 
 ## Workflow
 
 ```
-000-brief.md               ← User input
+000-brief.md               ← User input (required)
     ↓
 001-research-report.md     ← Research (competitive analysis)
     ↓
 002-plan.md               ← Plan (user confirms)
     ↓
 003-task-queue.json       ← Tasks (auto-generated)
-004-spec.md               ← Specification
-005-eval-rubric.md       ← Evaluation rubric
     ↓
 Development Loop (Generator → Evaluator)
 ```
@@ -81,25 +89,19 @@ Development Loop (Generator → Evaluator)
 
 | Mode | Iterations | Threshold | Use Case |
 |------|------------|-----------|----------|
-| `new` | 15 | 7.0 | Full project |
+| `new` (default) | 15 | 7.0 | Full project |
 | `iterate` | 10 | 7.0 | Bug fix / feature |
 | `test` | 3 | 5.0 | Quick validation |
-
-## Default LLM Settings
-
-| Model | URL |
-|-------|-----|
-| claude-3-5-sonnet-4-7 | https://api.anthropic.com |
 
 ## Project Structure
 
 ```
 autodev-harness/
 ├── autodev-harness.sh     # Main entry
-├── agents/                 # Agent prompts
-├── lib/                    # Libraries
-├── config/                 # LLM providers & config
-└── tests/                  # Test suite
+├── agents/                # Agent prompts
+├── lib/                   # Libraries
+├── config/                # Configuration
+└── tests/                 # Test suite
 ```
 
 ## License
