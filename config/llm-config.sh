@@ -37,18 +37,3 @@ show_llm_config() {
     echo "  URL: ${LLM_URL:-not set}"
     echo "  API Key: ${LLM_API_KEY:+***}"
 }
-
-create_project_config() {
-    local pd="$1"; local cf="$pd/.autodev-harness/config.json"
-    mkdir -p "$pd/.autodev-harness"
-    cat > "$cf" <<'CONF'
-{
-  "model": "MODEL",
-  "api_key": "KEY",
-  "url": "URL"
-}
-CONF
-    sed -i.bak "s/MODEL/${LLM_MODEL}/g; s/KEY/${LLM_API_KEY}/g; s/URL/${LLM_URL}/g" "$cf"
-    rm -f "$cf.bak"
-    echo "Config saved to: $cf"
-}
