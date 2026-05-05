@@ -28,7 +28,6 @@ source "$LIB_DIR/ui.sh"
 source "$LIB_DIR/files.sh"
 source "$LIB_DIR/claude.sh"
 source "$LIB_DIR/state.sh"
-source "$SCRIPT_DIR/config/providers.sh"
 source "$SCRIPT_DIR/config/llm-config.sh"
 
 # Load LLM config (priority: CLI > env > config file > defaults)
@@ -49,7 +48,7 @@ OPTIONS:
     --max-iterations N  Set max iterations (default: 15)
 
 LLM OPTIONS:
-    --provider PROVIDER   LLM provider (anthropic, openai, ollama, groq, deepseek)
+    --llm-key KEY        LLM API key
     --llm-url URL        LLM API URL
     --model MODEL        Model name
 
@@ -73,7 +72,6 @@ parse_args() {
             --status) ACTION="status"; shift ;;
             --restart) ACTION="restart"; shift ;;
             --max-iterations) MAX_ITERATIONS="$2"; shift 2 ;;
-            --provider) LLM_PROVIDER="$2"; shift 2 ;;
             --llm-url) LLM_URL="$2"; shift 2 ;;
             --model) LLM_MODEL="$2"; shift 2 ;;
             -h|--help) usage; exit 0 ;;
@@ -107,7 +105,7 @@ configure_mode() {
             log "🆕 NEW MODE: Building from scratch"
             ;;
     esac
-    log "  Provider: $LLM_PROVIDER, Model: $LLM_MODEL"
+    log "  Model: $LLM_MODEL"
 }
 
 # === Phase: Research ===
