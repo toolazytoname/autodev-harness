@@ -114,6 +114,23 @@ ensure_project_dir() {
         mkdir -p "$PROJECT_DIR"
         log_step "Project directory created: $PROJECT_DIR"
     fi
+
+    # Create .claude/settings.local.json with write permissions if not exists
+    local claude_dir="$PROJECT_DIR/.claude"
+    local settings_file="$claude_dir/settings.local.json"
+    if [[ ! -f "$settings_file" ]]; then
+        mkdir -p "$claude_dir"
+        cat > "$settings_file" << 'PERMS'
+{
+  "permissions": {
+    "allow": [
+      "Write(/**)"
+    ]
+  }
+}
+PERMS
+        log_step "Created permissions: $settings_file"
+    fi
 }
 
 # === Get state summary ===
