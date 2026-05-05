@@ -1,108 +1,103 @@
-# AutoDevHarness - 全自动 AI 开发系统
+# AutoDevHarness
 
-> 基于 Anthropic GAN-Style 三代理架构的全自动开发系统，无需人工干预即可开发任何系统，同时保证开发质量，避免屎山代码。
+AI-Powered Development Framework with **Research → Plan → Develop** workflow.
 
-## 目录
+## Features
 
-- [快速开始](#快速开始)
-- [系统架构](#系统架构)
-- [核心组件](#核心组件)
-- [使用指南](#使用指南)
-- [监控仪表盘](#监控仪表盘)
-- [GAN 评分系统](#gan-评分系统)
-- [质量门禁](#质量门禁)
-- [CI/CD 集成](#cicd-集成)
-- [常见问题](#常见问题)
+- **Three Modes**: new / iterate / test
+- **Research Phase**: Competitive analysis with best practices
+- **Interactive Plan**: User confirmation before development
+- **Resumable**: Continue from checkpoint
+- **Multi-Provider LLM**: Anthropic, OpenAI, Ollama, Groq, DeepSeek
+- **ECC Integration**: Uses everything-claude-code commands
 
----
-
-## 快速开始
-
-### 方式一：快速尝鲜
+## Quick Start
 
 ```bash
-# 1. 进入目录
-cd /Users/lazy/Code/crack/test/autodev-harness
+# New project
+./autodev-harness.sh /path/to/project
 
-# 2. 初始化一个示例项目
-./scripts/init-project.sh fullstack my-project
-cd my-project
+# Test mode (quick validation)
+./autodev-harness.sh --test /path/to/test-project
 
-# 3. 启动全自动开发
-../autodev-harness/scripts/autodev-harness.sh "Build a todo app with dark mode"
+# Iterate on existing project
+./autodev-harness.sh --iterate /path/to/existing-project
 
-# 4. 查看进度
-../autodev-harness/scripts/dashboard.sh
+# Continue from checkpoint
+./autodev-harness.sh -c /path/to/project
 ```
 
-### 方式二：CLI 仪表盘
+## LLM Configuration
+
+Priority: CLI args > Environment > Config file > Defaults
 
 ```bash
-# 实时监控（每5秒刷新）
-./autodev-harness/scripts/watch.sh 5
+# CLI options
+./autodev-harness.sh --provider openai --llm-key sk-xxx /path
+
+# Environment variables
+export ANTHROPIC_API_KEY=xxx
+export OPENAI_API_KEY=xxx
+export OLLAMA_API_KEY=xxx
+
+# Config file (~/.autodev-harness/config.json)
+{
+  "provider": "anthropic",
+  "url": "https://api.anthropic.com",
+  "api_key": "${ANTHROPIC_API_KEY}",
+  "model": "claude-3-5-sonnet-4-7"
+}
 ```
 
-### 方式三：Web UI
-
-```bash
-cd autodev-harness/ui
-npm install
-npm run dev
-# 访问 http://localhost:5173
-```
-
----
-
-## 系统架构
-
-### 核心设计理念
-
-本系统基于 **GAN (Generative Adversarial Network)** 的对抗思想：
-
-- **Generator (生成器)**: 负责编写代码，实现功能
-- **Evaluator (评审官)**: 负责严格评审，找出所有问题
-- 两者形成反馈循环：Generator 写代码 → Evaluator 打分 → 不通过则打回重做
-
-这解决了 AI Agent 的一个核心问题：**AI 往往会高估自己写的代码质量**。通过分离"写代码"和"评审代码"两个角色，评审官可以保持严格，不会自我原谅。
-
-### 架构图
+## Workflow
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         AutoDevHarness                             │
-│                                                                 │
-│   ┌──────────┐                                                   │
-│   │ Planner  │────▶ 生成产品规格 + 任务分解                      │
-│   └────┬─────┘                                                   │
-│        │                                                           │
-│        ▼                                                           │
-│   ┌────────────────────────────────────────────────────────┐   │
-│   │                    任务队列引擎                           │   │
-│   │  ┌─────────┐  ┌─────────┐  ┌─────────┐               │   │
-│   │  │ Task 1  │─▶│ Task 2  │─▶│ Task N  │  (DAG依赖管理) │   │
-│   │  └─────────┘  └────┬────┘  └─────────┘               │   │
-│   └────────────────────┼────────────────────────────────────┘   │
-│                        │                                          │
-│        ┌───────────────┼───────────────┐                         │
-│        ▼               ▼               ▼                         │
-│   ┌──────────┐   ┌──────────┐   ┌──────────────┐            │
-│   │ Generator │◀─▶│Evaluator │   │Quality Gates │            │
-│   │  生成器  │   │  评审官  │   │  质量门禁    │            │
-│   └──────────┘   └──────────┘   └──────────────┘            │
-│        │               │               │                          │
-│        │               │               ├── lint (阻塞)           │
-│        │               │               ├── build (阻塞)          │
-│        │               │               ├── test (阻塞)           │
-│        │               │               ├── e2e (条件阻塞)       │
-│        │               │               └── security (非阻塞)      │
-│        │               │                                           │
-│        │               └── GAN 评分: Design/Originality/         │
-│        │                            Craft/Functionality            │
-│        │                                                           │
-│        └── 循环直到评分 >= 7.0 或达到最大迭代                    │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+000-brief.md               ← User input
+    ↓
+001-research-report.md     ← Research (competitive analysis)
+    ↓
+002-plan.md               ← Plan (user confirms)
+    ↓
+003-task-queue.json       ← Tasks (auto-generated)
+004-spec.md               ← Specification
+005-eval-rubric.md       ← Evaluation rubric
+    ↓
+Development Loop (Generator → Evaluator)
 ```
+
+## Modes
+
+| Mode | Iterations | Threshold | Use Case |
+|------|------------|-----------|----------|
+| `new` | 15 | 7.0 | Full project |
+| `iterate` | 10 | 7.0 | Bug fix / feature |
+| `test` | 3 | 5.0 | Quick validation |
+
+## Supported LLM Providers
+
+| Provider | URL | Default Model |
+|----------|-----|--------------|
+| anthropic | api.anthropic.com | claude-3-5-sonnet-4-7 |
+| openai | api.openai.com/v1 | gpt-4o |
+| ollama | localhost:11434 | llama3 |
+| groq | api.groq.com | llama-3.1-70b |
+| deepseek | api.deepseek.com | deepseek-chat |
+
+## Project Structure
+
+```
+autodev-harness/
+├── autodev-harness.sh     # Main entry
+├── agents/                 # Agent prompts
+├── lib/                    # Libraries
+├── config/                 # LLM providers & config
+└── tests/                  # Test suite
+```
+
+## License
+
+MIT
+
 
 ### 工作流程
 
