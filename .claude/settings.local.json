@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Write(/**)",
       "Bash(cp SPEC.md PetStore/SPEC.md)",
       "Bash(cp config/eval-rubric.md PetStore/config/eval-rubric.md)",
       "Bash(git add *)",
