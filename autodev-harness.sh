@@ -51,7 +51,6 @@ OPTIONS:
 LLM OPTIONS:
     --provider PROVIDER   LLM provider (anthropic, openai, ollama, groq, deepseek)
     --llm-url URL        LLM API URL
-    --llm-key KEY        LLM API Key
     --model MODEL        Model name
 
 EXAMPLES:
@@ -59,7 +58,7 @@ EXAMPLES:
     $(basename "$0") --iterate /path/to/existing-project
     $(basename "$0") --test /path/to/test-project
     $(basename "$0") -c /path/to/project  # Resume
-    $(basename "$0") --provider openai --llm-key sk-xxx /path/to/project
+    $(basename "$0") --provider openai /path/to/project
 EOF
 }
 
@@ -76,7 +75,6 @@ parse_args() {
             --max-iterations) MAX_ITERATIONS="$2"; shift 2 ;;
             --provider) LLM_PROVIDER="$2"; shift 2 ;;
             --llm-url) LLM_URL="$2"; shift 2 ;;
-            --llm-key) LLM_API_KEY="$2"; shift 2 ;;
             --model) LLM_MODEL="$2"; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             -*) error "Unknown option: $1" ;;
@@ -93,6 +91,7 @@ parse_args() {
 
 # === Mode Configuration ===
 configure_mode() {
+    CURRENT_PHASE="init"
     case "$MODE" in
         test)
             MAX_ITERATIONS=3
@@ -108,62 +107,73 @@ configure_mode() {
             log "🆕 NEW MODE: Building from scratch"
             ;;
     esac
+    log "  Provider: $LLM_PROVIDER, Model: $LLM_MODEL"
 }
 
 # === Phase: Research ===
 phase_research() {
+    log_phase "research"
     local brief="$PROJECT_DIR/000-brief.md"
     local output="$PROJECT_DIR/001-research-report.md"
 
-    log "🔍 Phase 1: Research"
+    log_step "Reading brief from: $brief"
     ensure_file "$brief"
 
-    # Run research agent
+    log_step "Calling research agent..."
     call_claude "researcher" < "$brief" > "$output"
 
+    log_step "Research report saved: $output"
     save_state "plan"
-    log "✅ Research complete → $output"
+    log_done "Research complete"
 }
 
 # === Phase: Plan ===
 phase_plan() {
+    log_phase "plan"
     local research="$PROJECT_DIR/001-research-report.md"
     local output="$PROJECT_DIR/002-plan.md"
 
-    log "📋 Phase 2: Plan"
+    log_step "Reading research report: $research"
     ensure_file "$research"
 
-    # Generate plan using ECC plan skill
+    log_step "Calling planner agent..."
     call_claude "planner" < "$research" > "$output"
 
-    # User confirmation
+    log_step "Plan saved: $output"
+
+    log_step "Waiting for user confirmation..."
     confirm_plan "$output"
 
     save_state "tasks"
-    log "✅ Plan confirmed → $output"
+    log_done "Plan confirmed"
 }
 
 # === Phase: Tasks ===
 phase_tasks() {
+    log_phase "tasks"
     local plan="$PROJECT_DIR/002-plan.md"
     local output="$PROJECT_DIR/003-task-queue.json"
 
-    log "📝 Phase 3: Generate Tasks"
+    log_step "Reading plan: $plan"
     ensure_file "$plan"
 
+    log_step "Calling taskgen agent..."
     call_claude "taskgen" < "$plan" > "$output"
 
+    log_step "Tasks saved: $output"
     save_state "develop"
-    log "✅ Tasks generated → $output"
+    log_done "Tasks generated"
 }
 
 # === Phase: Develop ===
 phase_develop() {
-    log "🚀 Phase 4: Development Loop"
-
+    log_phase "develop"
     load_state
+
     local iteration=0
     local score=0
+
+    log "Starting development loop (max $MAX_ITERATIONS iterations)"
 
     while true; do
         ((iteration++))
@@ -174,41 +184,46 @@ phase_develop() {
             break
         fi
 
+        log ""
         log "━━━ Iteration $iteration/$MAX_ITERATIONS ━━━"
 
         # Get next pending task
         local task=$(get_next_task)
         if [[ -z "$task" ]]; then
-            log "✅ All tasks completed!"
+            log_done "All tasks completed!"
             break
         fi
 
-        log "📦 Task: $task"
+        log_step "Task: $task"
 
         # Run generator for this task
+        log_step "Running generator..."
         run_generator "$task" "$iteration"
 
         # Run evaluator
+        log_step "Running evaluator..."
         score=$(run_evaluator "$iteration")
 
         # Check if passed
         if is_score_passed "$score"; then
-            log "✅ Score: $score (passed)"
+            log "  Score: $score (passed threshold: $PASS_THRESHOLD)"
             complete_task "$task"
             save_iteration "$iteration" "$score"
         else
-            log "⚠️ Score: $score (need improvement)"
+            log "  Score: $score (below threshold: $PASS_THRESHOLD)"
             save_feedback "$iteration" "$score"
         fi
     done
 
-    log "🎉 Development complete!"
+    log_done "Development complete"
 }
 
 # === Resume Workflow ===
 resume_workflow() {
+    log_phase "resume"
     load_state
 
+    log "Resuming from phase: $CURRENT_PHASE"
     case "$CURRENT_PHASE" in
         plan)
             phase_plan
@@ -255,13 +270,22 @@ EOF
 restart_project() {
     log "⚠️ Restarting project..."
     rm -f "$PROJECT_DIR/state/workflow-state.json"
-    log "✅ Restarted. Run without --restart to begin fresh."
+    log_done "Restarted. Run without --restart to begin fresh."
 }
 
 # === Main ===
 main() {
     parse_args "$@"
     configure_mode
+
+    # Initialize logging for this project
+    init_logging "$PROJECT_DIR"
+    log ""
+    log "═══════════════════════════════════════════════════════"
+    log " AutoDevHarness v1.0"
+    log " Mode: $MODE, Project: $PROJECT_DIR"
+    log "═══════════════════════════════════════════════════════"
+    log ""
 
     # Handle non-execution commands
     case "${ACTION:-}" in
@@ -295,6 +319,12 @@ main() {
     phase_plan
     phase_tasks
     phase_develop
+
+    log ""
+    log "═══════════════════════════════════════════════════════"
+    log " Workflow complete!"
+    log " Log saved: $LOG_FILE"
+    log "═══════════════════════════════════════════════════════"
 }
 
 # === Entry Point ===

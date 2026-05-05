@@ -1,24 +1,71 @@
 #!/bin/bash
 # =============================================================================
-# UI Library - User interface functions
+# UI Library - User interface functions and logging
 # =============================================================================
 
-# === Logging ===
+# Log file for the project
+LOG_FILE=""
+CURRENT_PHASE=""
+
+# === Init logging ===
+init_logging() {
+    local project_dir="$1"
+    LOG_FILE="$project_dir/logs/harness.log"
+    mkdir -p "$project_dir/logs"
+}
+
+# === Logging with file output ===
 log() {
-    echo "[$(date +%H:%M:%S)] $*"
+    local msg="[$(date +%Y-%m-%d\ %H:%M:%S)] [${CURRENT_PHASE:-init}] $*"
+    echo "$msg"
+    if [[ -n "$LOG_FILE" ]]; then
+        echo "$msg" >> "$LOG_FILE"
+    fi
+}
+
+log_phase() {
+    local phase="$1"
+    CURRENT_PHASE="$phase"
+    log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log "▶ PHASE START: $phase"
+    log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+log_step() {
+    log "  ➜ $*"
+}
+
+log_done() {
+    log "✅ DONE: $*"
+}
+
+log_error() {
+    log "❌ ERROR: $*"
 }
 
 warn() {
-    echo "[$(date +%H:%M:%S)] ⚠️ $*" >&2
+    local msg="[$(date +%Y-%m-%d\ %H:%M:%S)] [${CURRENT_PHASE:-init}] ⚠️ $*"
+    echo "$msg" >&2
+    if [[ -n "$LOG_FILE" ]]; then
+        echo "$msg" >> "$LOG_FILE"
+    fi
 }
 
 error() {
-    echo "[$(date +%H:%M:%S)] ❌ $*" >&2
+    local msg="[$(date +%Y-%m-%d\ %H:%M:%S)] [${CURRENT_PHASE:-init}] ❌ $*"
+    echo "$msg" >&2
+    if [[ -n "$LOG_FILE" ]]; then
+        echo "$msg" >> "$LOG_FILE"
+    fi
     exit 1
 }
 
 success() {
-    echo "[$(date +%H:%M:%S)] ✅ $*"
+    local msg="[$(date +%Y-%m-%d\ %H:%M:%S)] [${CURRENT_PHASE:-init}] ✅ $*"
+    echo "$msg"
+    if [[ -n "$LOG_FILE" ]]; then
+        echo "$msg" >> "$LOG_FILE"
+    fi
 }
 
 # === User Confirmation ===

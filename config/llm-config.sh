@@ -1,9 +1,11 @@
 #!/bin/bash
 # LLM Configuration - Priority-based config loader
+# Note: API keys are handled by Claude Code, not by this harness
+
 PROVIDERS_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/providers.sh"
 source "$PROVIDERS_SH"
 
-LLM_PROVIDER=""; LLM_URL=""; LLM_API_KEY=""; LLM_MODEL=""
+LLM_PROVIDER=""; LLM_URL=""; LLM_MODEL=""
 
 load_config_file() {
     local cf="$1"
@@ -12,7 +14,6 @@ load_config_file() {
     fi
     LLM_PROVIDER=$(grep -m1 "\"provider\"" "$cf" 2>/dev/null | sed "s/.*: *\"\([^\"]*\)\".*/\1/")
     LLM_URL=$(grep -m1 "\"url\"" "$cf" 2>/dev/null | sed "s/.*: *\"\([^\"]*\)\".*/\1/")
-    LLM_API_KEY=$(grep -m1 "\"api_key\"" "$cf" 2>/dev/null | sed "s/.*: *\"\([^\"]*\)\".*/\1/")
     LLM_MODEL=$(grep -m1 "\"model\"" "$cf" 2>/dev/null | sed "s/.*: *\"\([^\"]*\)\".*/\1/")
     return 0
 }
@@ -20,7 +21,6 @@ load_config_file() {
 load_config_env() {
     [[ -n "$LLM_PROVIDER" ]] || LLM_PROVIDER="${PROVIDER:-}"
     [[ -n "$LLM_URL" ]] || LLM_URL="${LLM_URL:-}"
-    [[ -n "$LLM_API_KEY" ]] || LLM_API_KEY="${LLM_API_KEY:-${ANTHROPIC_API_KEY:-${OPENAI_API_KEY:-}}}"
     [[ -n "$LLM_MODEL" ]] || LLM_MODEL="${LLM_MODEL:-}"
 }
 
@@ -42,7 +42,6 @@ apply_cli_config() {
         case "$1" in
             --provider) LLM_PROVIDER="$2"; shift 2 ;;
             --llm-url) LLM_URL="$2"; shift 2 ;;
-            --llm-key) LLM_API_KEY="$2"; shift 2 ;;
             --model) LLM_MODEL="$2"; shift 2 ;;
             *) shift ;;
         esac
@@ -55,7 +54,6 @@ show_llm_config() {
     echo "  Provider: ${LLM_PROVIDER:-not set}"
     echo "  URL: ${LLM_URL:-not set}"
     echo "  Model: ${LLM_MODEL:-not set}"
-    echo "  API Key: ${LLM_API_KEY:+***configured***}"
 }
 
 create_project_config() {
@@ -65,7 +63,6 @@ create_project_config() {
 {
   "provider": "${LLM_PROVIDER:-anthropic}",
   "url": "${LLM_URL:-}",
-  "api_key": "",
   "model": "${LLM_MODEL:-}"
 }
 EOF
