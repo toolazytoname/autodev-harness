@@ -14,14 +14,8 @@ set -e
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly LIB_DIR="$SCRIPT_DIR/lib"
 
-# Default config
-MODE="new"
-ACTION=""
-PROJECT_DIR=""
-MAX_ITERATIONS=15
-PASS_THRESHOLD=7.0
-SKIP_E2E=false
-SKIP_SECURITY=false
+# === Load Default Config ===
+source "$SCRIPT_DIR/config/harness.config.sh"
 
 # === Load Libraries ===
 source "$LIB_DIR/ui.sh"
