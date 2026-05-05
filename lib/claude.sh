@@ -1,22 +1,30 @@
 #!/bin/bash
 # =============================================================================
-# Claude Library - Claude API interactions
+# Claude Library - Claude API interactions with retry and observability
 # =============================================================================
 
-# === Call Claude with agent ===
+# Retry configuration
+MAX_RETRIES=3
+RETRY_BASE_DELAY=2
+
+# === Call Claude with agent (with retry and logging) ===
 call_claude() {
     local agent="$1"
     local input="${2:-}"
     local output="${3:-}"
     local agent_file="$SCRIPT_DIR/agents/${agent}.md"
 
-    log_step "Agent: $agent, Input: ${input:-stdin}, Output: ${output:-stdout}"
+    log_step "┌─ Agent call: $agent"
+    log_step "│  Input: ${input:-stdin}"
+    log_step "│  Output: ${output:-stdout}"
+    log_step "│  Model: ${LLM_MODEL:-claude-3-5-sonnet-4-7}"
 
     if [[ ! -f "$agent_file" ]]; then
+        log_error "│  ✗ Agent file not found: $agent_file"
         error "Agent not found: $agent"
     fi
 
-    # Use temp file for prompt
+    # Prepare prompt file
     local prompt_file=$(mktemp)
     cat "$agent_file" > "$prompt_file"
 
@@ -26,31 +34,62 @@ call_claude() {
         cat "$input" >> "$prompt_file"
     fi
 
-    log_step "Calling claude with model: ${LLM_MODEL:-claude-3-5-sonnet-4-7}"
-    local start_time=$(date +%s)
+    local input_size=$(wc -c < "$prompt_file")
+    log_step "│  Prompt size: ${input_size} bytes"
 
-    # Execute claude with prompt file
-    if [[ -n "$output" ]]; then
-        ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-claude-3-5-sonnet-4-7}" > "$output" 2>&1
-        local exit_code=$?
-    else
-        ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-claude-3-5-sonnet-4-7}" 2>&1
-        local exit_code=$?
-    fi
+    # Execute with retry
+    local attempt=1
+    local exit_code=0
+    local last_error=""
 
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
+    while [[ $attempt -le $MAX_RETRIES ]]; do
+        log_step "│  Attempt $attempt/$MAX_RETRIES..."
+
+        local start_time=$(date +%s)
+
+        if [[ -n "$output" ]]; then
+            ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-claude-3-5-sonnet-4-7}" > "$output" 2>&1
+            exit_code=$?
+        else
+            ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-claude-3-5-sonnet-4-7}" 2>&1
+            exit_code=$?
+        fi
+
+        local end_time=$(date +%s)
+        local duration=$((end_time - start_time))
+
+        if [[ $exit_code -eq 0 ]]; then
+            log_step "│  ✓ Success in ${duration}s"
+            break
+        else
+            last_error=$(cat "$output" 2>/dev/null | tail -5)
+            log_step "│  ✗ Failed in ${duration}s (exit: $exit_code)"
+
+            if [[ $attempt -lt $MAX_RETRIES ]]; then
+                local delay=$((RETRY_BASE_DELAY * attempt))
+                log_step "│  ↺ Retrying in ${delay}s..."
+                sleep $delay
+            fi
+        fi
+
+        ((attempt++))
+    done
 
     rm -f "$prompt_file"
 
-    if [[ -n "$output" && -f "$output" ]]; then
-        local output_size=$(wc -c < "$output")
-        log_step "Output: ${output_size} bytes, Duration: ${duration}s, Exit: $exit_code"
-    else
-        log_step "Duration: ${duration}s, Exit: $exit_code"
+    if [[ $exit_code -ne 0 ]]; then
+        log_error "│  ✗ All $MAX_RETRIES attempts failed"
+        log_error "│  Last error: ${last_error:0:200}"
+        return $exit_code
     fi
 
-    return $exit_code
+    if [[ -n "$output" && -f "$output" ]]; then
+        local output_size=$(wc -c < "$output")
+        log_step "│  Output size: ${output_size} bytes"
+    fi
+
+    log_step "└─ Call complete"
+    return 0
 }
 
 # === Run generator ===
@@ -60,7 +99,6 @@ run_generator() {
 
     log_step "Generator for task: $task (iteration $iteration)"
 
-    # Create context file for generator
     local context_file="$PROJECT_DIR/.claude/generator-context.md"
     ensure_dir "$PROJECT_DIR/.claude"
 
@@ -89,7 +127,6 @@ run_evaluator() {
 
     call_claude "evaluator" > "$feedback_file"
 
-    # Extract score (simple grep)
     local score=$(grep -oP '\*\*TOTAL\*\*.*?(\d+\.\d+)' "$feedback_file" | grep -oP '\d+\.\d+' | head -1)
 
     log_step "Score: ${score:-0}"
@@ -100,11 +137,9 @@ run_evaluator() {
 is_score_passed() {
     local score="$1"
 
-    # Compare with threshold (simple bc comparison)
     if command -v bc &>/dev/null; then
         $(echo "$score >= $PASS_THRESHOLD" | bc -l)
     else
-        # Fallback: compare as integers (5.0 -> 50, 7.0 -> 70)
         local score_int=$(echo "$score * 10" | bc 2>/dev/null || echo "0")
         local threshold_int=$(echo "$PASS_THRESHOLD * 10" | bc 2>/dev/null || echo "0")
         [[ $score_int -ge $threshold_int ]]
@@ -117,6 +152,19 @@ save_iteration() {
     local score="$2"
 
     log "📊 Iteration $iteration: score $score"
+
+    # Persist iteration to state
+    local iter_file="$PROJECT_DIR/state/iterations.json"
+    mkdir -p "$PROJECT_DIR/state"
+
+    if [[ -f "$iter_file" ]]; then
+        # Append to existing
+        local temp=$(mktemp)
+        jq --arg i "$iteration" --arg s "$score" '. + [{iteration: $i, score: $s, timestamp: now}]' "$iter_file" > "$temp" 2>/dev/null || echo "[{\"iteration\":\"$iteration\",\"score\":\"$score\",\"timestamp\":$(date +%s)}]" > "$temp"
+        mv "$temp" "$iter_file"
+    else
+        echo "[{\"iteration\":\"$iteration\",\"score\":\"$score\",\"timestamp\":$(date +%s)}]" > "$iter_file"
+    fi
 }
 
 # === Save feedback ===
