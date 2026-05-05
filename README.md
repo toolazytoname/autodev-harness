@@ -11,6 +11,22 @@ AI-Powered Development Framework with **Research → Plan → Develop** workflow
 - **Multi-Provider LLM**: Anthropic, OpenAI, Ollama, Groq, DeepSeek
 - **ECC Integration**: Uses everything-claude-code commands
 
+## Input Your Project Brief
+
+Before running the harness, create a `000-brief.md` file in your project directory:
+
+```bash
+mkdir my-project && cd my-project
+cat > 000-brief.md << 'EOF'
+# 项目需求描述
+
+[在这里描述你的项目需求]
+
+示例：我要开发一个宠物养成系统，
+用户可以领养虚拟宠物，喂养并看着它成长升级。
+EOF
+```
+
 ## Quick Start
 
 ```bash
