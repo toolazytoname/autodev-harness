@@ -40,7 +40,6 @@ call_claude() {
     # Execute with retry
     local attempt=1
     local exit_code=0
-    local last_error=""
 
     while [[ $attempt -le $MAX_RETRIES ]]; do
         log_step "│  Attempt $attempt/$MAX_RETRIES..."
@@ -49,19 +48,16 @@ call_claude() {
         local start_time=$(date +%s)
 
         if [[ -n "$output" ]]; then
-            # Run with output streaming - show progress every 10 seconds
-            {
-                ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-MiniMax-M2.7}" 2>&1
-            } | tee "$output" &
+            # Stream output to file and show progress
+            ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-MiniMax-M2.7}" > "$output" 2>&1 &
             local pid=$!
             
-            # Show progress while running
+            # Show progress every 5 seconds while running
             while kill -0 $pid 2>/dev/null; do
-                log_step "│  ⏳ Agent running... (pid: $pid)"
-                sleep 10
+                log_step "│  ⏳ Agent running... (${pid})"
+                sleep 5
             done
             
-            # Wait for completion
             wait $pid
             exit_code=$?
         else
@@ -76,11 +72,9 @@ call_claude() {
             log_step "│  ✓ Completed in ${duration}s"
             break
         else
-            last_error=$(cat "$output" 2>/dev/null | tail -10 | head -5)
             log_step "│  ✗ Failed in ${duration}s (exit: $exit_code)"
-            log_step "│  ↺ Retrying in ${RETRY_BASE_DELAY}s..."
-
             if [[ $attempt -lt $MAX_RETRIES ]]; then
+                log_step "│  ↺ Retrying in ${RETRY_BASE_DELAY}s..."
                 sleep $RETRY_BASE_DELAY
             fi
         fi
@@ -165,12 +159,10 @@ save_iteration() {
 
     log "📊 Iteration $iteration: score $score"
 
-    # Persist iteration to state
     local iter_file="$PROJECT_DIR/state/iterations.json"
     mkdir -p "$PROJECT_DIR/state"
 
     if [[ -f "$iter_file" ]]; then
-        # Append to existing
         local temp=$(mktemp)
         jq --arg i "$iteration" --arg s "$score" '. + [{iteration: $i, score: $s, timestamp: now}]' "$iter_file" > "$temp" 2>/dev/null || echo "[{\"iteration\":\"$iteration\",\"score\":\"$score\",\"timestamp\":$(date +%s)}]" > "$temp"
         mv "$temp" "$iter_file"
