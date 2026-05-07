@@ -9,6 +9,11 @@ RETRY_BASE_DELAY=2
 
 # === Call Claude with agent (with retry and logging) ===
 call_claude() {
+    # Ensure we have a valid working directory first
+    if [[ -d "$PROJECT_DIR" ]]; then
+        cd "$PROJECT_DIR" 2>/dev/null || true
+    fi
+
     local agent="$1"
     local input="${2:-}"
     local output="${3:-}"
@@ -24,7 +29,7 @@ call_claude() {
         error "Agent not found: $agent"
     fi
 
-    # Prepare prompt file
+    # Prepare prompt file in /tmp
     local prompt_file=$(mktemp)
     cat "$agent_file" > "$prompt_file"
 
@@ -40,6 +45,7 @@ call_claude() {
     # Execute with retry
     local attempt=1
     local exit_code=0
+    local actual_output="${output:-$(mktemp)}"
 
     while [[ $attempt -le $MAX_RETRIES ]]; do
         log_step "│  Attempt $attempt/$MAX_RETRIES..."
@@ -49,19 +55,20 @@ call_claude() {
 
         if [[ -n "$output" ]]; then
             # Stream output to file and show progress
-            ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-MiniMax-M2.7}" > "$output" 2>&1 &
+            # Use -p (print mode) via pipe to avoid session context
+            (cd "$PROJECT_DIR" && cat "$prompt_file" | ECC_GATEGUARD=off claude -p --model "${LLM_MODEL:-MiniMax-M2.7}" > "$actual_output" 2>&1) &
             local pid=$!
-            
+
             # Show progress every 5 seconds while running
             while kill -0 $pid 2>/dev/null; do
                 log_step "│  ⏳ Agent running... (${pid})"
                 sleep 5
             done
-            
+
             wait $pid
             exit_code=$?
         else
-            ECC_GATEGUARD=off claude @"$prompt_file" --model "${LLM_MODEL:-MiniMax-M2.7}" 2>&1
+            (cd "$PROJECT_DIR" && cat "$prompt_file" | ECC_GATEGUARD=off claude -p --model "${LLM_MODEL:-MiniMax-M2.7}" 2>&1)
             exit_code=$?
         fi
 
@@ -81,6 +88,11 @@ call_claude() {
 
         ((attempt++))
     done
+
+    # Move output if we used temp file
+    if [[ -n "$output" && -f "$actual_output" && "$actual_output" != "$output" ]]; then
+        mv "$actual_output" "$output"
+    fi
 
     rm -f "$prompt_file"
 

@@ -73,10 +73,13 @@ confirm() {
     local question="$1"
     local response=""
 
-    if [[ ! -t 0 ]] && ! read -p "$question [y/n]: " response 2>/dev/null; then
-        # Non-interactive mode: auto-approve
+    # Non-interactive mode: auto-approve
+    if [[ ! -t 0 ]]; then
         return 0
     fi
+
+    # Interactive mode: read user input
+    read -p "$question [y/n]: " response
     [[ "$response" =~ ^[Yy]$ ]]
 }
 

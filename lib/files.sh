@@ -64,8 +64,9 @@ get_next_task() {
         return
     fi
 
-    # Extract next pending task ID (simple grep-based)
-    grep -o '"id": "[^"]*"' "$queue_file" | head -1 | cut -d'"' -f4
+    # Extract next pending task ID - handle both "id": "xxx" and "id":"xxx" formats
+    grep -oE '"id":"[^"]*"' "$queue_file" | head -1 | sed 's/"id":"//;s/"//'
+
 }
 
 # === Complete task ===

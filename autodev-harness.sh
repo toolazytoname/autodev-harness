@@ -17,6 +17,10 @@ readonly LIB_DIR="$SCRIPT_DIR/lib"
 # === Load Default Config ===
 source "$SCRIPT_DIR/config/harness.config.sh"
 
+# Apply defaults (CLI args override config defaults)
+MAX_ITERATIONS="${MAX_ITERATIONS:-$DEFAULT_MAX_ITERATIONS}"
+PASS_THRESHOLD="${PASS_THRESHOLD:-$DEFAULT_PASS_THRESHOLD}"
+
 # === Load Libraries ===
 source "$LIB_DIR/ui.sh"
 source "$LIB_DIR/files.sh"
@@ -179,7 +183,7 @@ phase_tasks() {
     ensure_file "$plan"
 
     log_step "Calling taskgen agent..."
-    call_claude "taskgen" < "$plan" > "$output"
+    call_claude "taskgen" "$plan" "$output"
 
     log_step "Tasks saved: $output"
     save_state "develop"

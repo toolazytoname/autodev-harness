@@ -15,7 +15,8 @@
       "Bash(ECC_GATEGUARD=off cd /Users/lazy/Code/crack/test/CutePetStore)",
       "Bash(ECC_GATEGUARD=off vercel inspect *)",
       "Bash(ECC_GATEGUARD=off ls *)",
-      "Bash(rtk ls *)"
+      "Bash(rtk ls *)",
+      "Bash(rm -rf /Users/lazy/Code/crack/test/petstore/*)"
     ]
   }
 }
