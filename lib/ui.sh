@@ -97,10 +97,15 @@ collect_infra_config() {
     echo "   (e.g., https://xxxxx.supabase.co)"
     read -p "   → " INFRA_URL
 
-    # Supabase Anon Key
+    # Supabase Anon Key (for client-side)
     echo ""
     echo "2) Supabase Anon Key (客户端使用):"
     read -p "   → " INFRA_ANON_KEY
+
+    # Supabase Service Role Key (for DDL operations)
+    echo ""
+    echo "3) Supabase Service Role Key (建表/执行SQL):"
+    read -p "   → " INFRA_SERVICE_ROLE_KEY
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -114,7 +119,7 @@ collect_infra_config() {
 
 SUPABASE_URL="$INFRA_URL"
 SUPABASE_ANON_KEY="$INFRA_ANON_KEY"
-SUPABASE_SERVICE_ROLE_KEY="$INFRA_ANON_KEY"
+SUPABASE_SERVICE_ROLE_KEY="$INFRA_SERVICE_ROLE_KEY"
 INFRA_EOF
 
     # Add to .gitignore if not already there
