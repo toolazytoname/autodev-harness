@@ -36,6 +36,63 @@ npm test         # 测试必须通过
 - 新逻辑有测试覆盖
 - 无硬编码密钥
 
+## README 生成
+
+完成代码实现后，必须生成 `README.md` 文件：
+
+```markdown
+# 项目名称
+
+## 项目简介
+[简要描述项目做什么]
+
+## 快速开始
+
+### 环境要求
+- Node.js 18+
+- npm 或 yarn
+
+### 安装
+\`\`\`bash
+npm install
+\`\`\`
+
+### 环境变量
+创建 `.env.local` 文件：
+\`\`\`
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+\`\`\`
+
+### 运行
+\`\`\`bash
+npm run dev
+\`\`\`
+
+## 项目结构
+\`\`\`
+src/
+  app/          # Next.js App Router
+  components/   # React 组件
+  lib/          # 工具函数
+  types/        # TypeScript 类型
+\`\`\`
+
+## 可用命令
+
+| 命令 | 描述 |
+|------|------|
+| `npm run dev` | 启动开发服务器 |
+| `npm run build` | 构建生产版本 |
+| `npm run test` | 运行测试 |
+| `npm run lint` | 代码检查 |
+
+## 技术栈
+- [列表]
+```
+
+**如果项目已有 README.md，更新而不是覆盖它。**
+
 ## 反 AI 敷衍
 
 避免：

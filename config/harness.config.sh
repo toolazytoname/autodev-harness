@@ -35,3 +35,6 @@ RUBRIC_FILE="005-eval-rubric.md"
 ACTION=""
 PROJECT_DIR=""
 BRIEF_ARGS=""
+
+# Infrastructure config file
+INFRA_CONFIG_FILE=".infrastructure.conf"

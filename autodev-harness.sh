@@ -155,6 +155,12 @@ phase_research() {
 # === Phase: Plan ===
 phase_plan() {
     log_phase "plan"
+
+    # Collect infrastructure config first (Supabase URL, keys)
+    log_step "Collecting infrastructure configuration..."
+    collect_infra_config "$PROJECT_DIR"
+    load_infra_config "$PROJECT_DIR"
+
     local research="$PROJECT_DIR/001-research-report.md"
     local output="$PROJECT_DIR/002-plan.md"
 
