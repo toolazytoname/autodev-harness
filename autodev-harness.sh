@@ -184,16 +184,16 @@ phase_ui_design() {
     log_phase "ui_design"
 
     local plan="$PROJECT_DIR/002-plan.md"
-    local output="$PROJECT_DIR/006-ui-spec.md"
-    local preview_dir="$PROJECT_DIR/preview"
-    local preview_file="$preview_dir/index.html"
+    local spec_output="$PROJECT_DIR/006-ui-spec.md"
+    local html_output="$PROJECT_DIR/preview/index.html"
     local context_file="$PROJECT_DIR/.claude/ui-design-context.md"
+    local temp_output=$(mktemp)
 
     log_step "Reading plan: $plan"
     ensure_file "$plan"
 
     # Create preview directory
-    mkdir -p "$preview_dir"
+    mkdir -p "$PROJECT_DIR/preview"
 
     # Create context file with project info
     cat > "$context_file" <<EOF
@@ -201,27 +201,49 @@ phase_ui_design() {
 
 Project: $PROJECT_DIR
 Plan: $plan
-Output Spec: $output
-Preview Dir: $preview_dir
-Preview File: $preview_file
 
 ---PLAN---
 $(cat "$plan")
 EOF
 
     log_step "Calling UI design agent..."
-    call_claude "ui-design" "$context_file" > "$output"
+    call_claude "ui-design" "$context_file" > "$temp_output"
 
-    log_step "UI spec saved: $output"
-
-    # Check if preview was generated
-    if [[ ! -f "$preview_file" ]]; then
-        log_error "Preview file not generated: $preview_file"
-        return 1
+    # Split output by delimiter
+    if grep -q "---HTML---" "$temp_output"; then
+        # Extract spec (before ---HTML---)
+        sed '/---HTML---/q' "$temp_output" | sed '/---HTML---$/d' > "$spec_output"
+        # Extract HTML (after ---HTML---)
+        sed '1,/---HTML---/d' "$temp_output" > "$html_output"
+    else
+        # No HTML found, treat entire output as spec
+        cp "$temp_output" "$spec_output"
+        # Create minimal HTML placeholder
+        cat > "$html_output" <<'HTML'
+<!DOCTYPE html>
+<html>
+<head>
+  <title>UI Mockup Placeholder</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-8">
+  <div class="text-red-500">HTML not generated. Please check spec.</div>
+</body>
+</html>
+HTML
     fi
 
-    log_step "Preview saved: $preview_file"
-    log_step "Open in browser: file://$preview_file"
+    rm -f "$temp_output"
+
+    log_step "UI spec saved: $spec_output"
+    log_step "Preview saved: $html_output"
+    log_step "Open in browser: file://$html_output"
+
+    # Check if HTML is valid (non-empty and looks like HTML)
+    if [[ ! -s "$html_output" ]] || ! grep -q "<!DOCTYPE html>" "$html_output"; then
+        log_error "Invalid HTML file generated"
+        return 1
+    fi
 
     log_step "Waiting for UI design confirmation..."
     confirm "Do you approve the UI design?"
