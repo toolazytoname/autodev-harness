@@ -187,6 +187,7 @@ phase_ui_design() {
     local output="$PROJECT_DIR/006-ui-spec.md"
     local preview_dir="$PROJECT_DIR/preview"
     local preview_file="$preview_dir/index.html"
+    local context_file="$PROJECT_DIR/.claude/ui-design-context.md"
 
     log_step "Reading plan: $plan"
     ensure_file "$plan"
@@ -194,8 +195,22 @@ phase_ui_design() {
     # Create preview directory
     mkdir -p "$preview_dir"
 
+    # Create context file with project info
+    cat > "$context_file" <<EOF
+# UI Design Context
+
+Project: $PROJECT_DIR
+Plan: $plan
+Output Spec: $output
+Preview Dir: $preview_dir
+Preview File: $preview_file
+
+---PLAN---
+$(cat "$plan")
+EOF
+
     log_step "Calling UI design agent..."
-    call_claude "ui-design" < "$plan" > "$output"
+    call_claude "ui-design" "$context_file" > "$output"
 
     log_step "UI spec saved: $output"
 
