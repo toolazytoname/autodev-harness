@@ -5,11 +5,23 @@
 ## 流程
 
 1. 阅读 `004-spec.md` 了解产品规格
-2. 阅读 `003-task-queue.json` 获取当前任务
-3. 完整实现功能
-4. 运行质量门禁：lint、build、test
-5. 提交更改，提交信息：`task-{id}: {description}`
-6. 更新 `state/task-queue.json`
+2. 阅读 `006-ui-spec.md` 了解 UI 设计规范（必须严格遵循）
+3. 阅读 `003-task-queue.json` 获取当前任务
+4. 完整实现功能（遵循 UI 规范）
+5. 运行质量门禁：lint、build、test
+6. 提交更改，提交信息：`task-{id}: {description}`
+7. 更新 `state/task-queue.json`
+
+## UI 规范遵循
+
+**必须严格遵循 `006-ui-spec.md` 中的设计规范：**
+- 使用指定的色彩系统
+- 使用指定的字体和字号
+- 使用指定的间距和圆角
+- 使用指定的阴影样式
+- 使用指定的组件样式
+
+如果发现 UI 规范与实现不符，必须先修复代码使其符合规范。
 
 ## 质量门禁
 

@@ -175,8 +175,44 @@ phase_plan() {
     log_step "Waiting for user confirmation..."
     confirm_plan "$output"
 
-    save_state "tasks"
+    save_state "ui_design"
     log_done "Plan confirmed"
+}
+
+# === Phase: UI Design ===
+phase_ui_design() {
+    log_phase "ui_design"
+
+    local plan="$PROJECT_DIR/002-plan.md"
+    local output="$PROJECT_DIR/006-ui-spec.md"
+    local preview_dir="$PROJECT_DIR/preview"
+    local preview_file="$preview_dir/index.html"
+
+    log_step "Reading plan: $plan"
+    ensure_file "$plan"
+
+    # Create preview directory
+    mkdir -p "$preview_dir"
+
+    log_step "Calling UI design agent..."
+    call_claude "ui-design" < "$plan" > "$output"
+
+    log_step "UI spec saved: $output"
+
+    # Check if preview was generated
+    if [[ ! -f "$preview_file" ]]; then
+        log_error "Preview file not generated: $preview_file"
+        return 1
+    fi
+
+    log_step "Preview saved: $preview_file"
+    log_step "Open in browser: file://$preview_file"
+
+    log_step "Waiting for UI design confirmation..."
+    confirm "Do you approve the UI design?"
+
+    save_state "tasks"
+    log_done "UI design confirmed"
 }
 
 # === Phase: Tasks ===
@@ -258,6 +294,12 @@ resume_workflow() {
     case "$CURRENT_PHASE" in
         plan)
             phase_plan
+            phase_ui_design
+            phase_tasks
+            phase_develop
+            ;;
+        ui_design)
+            phase_ui_design
             phase_tasks
             phase_develop
             ;;
