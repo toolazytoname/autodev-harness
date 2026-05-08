@@ -210,11 +210,21 @@ EOF
     call_claude "ui-design" "$context_file" > "$temp_output"
 
     # Split output by delimiter
-    if grep -q "---HTML---" "$temp_output"; then
-        # Extract spec (before ---HTML---)
-        sed '/---HTML---/q' "$temp_output" | sed '/---HTML---$/d' > "$spec_output"
-        # Extract HTML (after ---HTML---)
-        sed '1,/---HTML---/d' "$temp_output" > "$html_output"
+    # Find line numbers of key delimiters
+    spec_start=$(awk '/^---SPEC---$/{print NR; exit}' "$temp_output")
+    html_start=$(awk '/^---HTML---$/{print NR; exit}' "$temp_output")
+    html_end=$(awk '/^---END---$/{print NR; exit}' "$temp_output")
+
+    if [[ -n "$html_start" && -n "$html_end" ]]; then
+        # Extract spec lines (after ---SPEC--- line, before ---HTML--- line)
+        if [[ -n "$spec_start" ]]; then
+            awk "NR>$spec_start && NR<$html_start" "$temp_output" > "$spec_output"
+        fi
+        # Extract HTML lines (after ---HTML--- line, before ---END--- line)
+        awk "NR>$html_start && NR<$html_end" "$temp_output" > "$html_output"
+    elif [[ -n "$html_start" ]]; then
+        # No END marker, just take everything after ---HTML---
+        awk "NR>$html_start" "$temp_output" > "$html_output"
     else
         # No HTML found, treat entire output as spec
         cp "$temp_output" "$spec_output"
