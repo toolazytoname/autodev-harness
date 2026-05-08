@@ -145,7 +145,7 @@ phase_research() {
     ensure_file "$brief"
 
     log_step "Calling research agent..."
-    call_claude "researcher" < "$brief" > "$output"
+    call_claude "researcher" "$brief" "$output"
 
     log_step "Research report saved: $output"
     save_state "plan"
@@ -168,7 +168,7 @@ phase_plan() {
     ensure_file "$research"
 
     log_step "Calling planner agent..."
-    call_claude "planner" < "$research" > "$output"
+    call_claude "planner" "$research" "$output"
 
     log_step "Plan saved: $output"
 
@@ -430,6 +430,7 @@ main() {
     # Run phases
     phase_research
     phase_plan
+    phase_ui_design
     phase_tasks
     phase_develop
 
