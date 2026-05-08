@@ -1,12 +1,14 @@
 # AutoDevHarness
 
-AI-Powered Development Framework with **Research → Plan → Develop** workflow.
+AI-Powered Development Framework with **Research → Plan → UI Design → Develop** workflow.
 
 ## Features
 
+- **Four Phases**: Research → Plan → UI Design → Develop
+- **Infrastructure First**: Collect Supabase config before development
+- **Visual UI Preview**: HTML mockup for design verification
+- **Test Coverage Gate**: Enforce >= 80% coverage
 - **Three Modes**: new / iterate / test
-- **Research Phase**: Competitive analysis with best practices
-- **Interactive Plan**: User confirmation before development
 - **Resumable**: Continue from checkpoint
 - **ECC Integration**: Uses everything-claude-code commands
 
@@ -33,11 +35,11 @@ export AUTODEV_MODEL="MiniMax-M2.7"
 
 # 2. 进入项目目录，用 -- 分隔描述内容（自动创建 000-brief.md）
 cd /path/to/project
-/path/to/autodev-harness.sh -- "我要开发一个宠物养成系统"
+./autodev-harness.sh -- "我要开发一个宠物养成系统"
 
 # 或者已有 000-brief.md，直接运行
 cd /path/to/project
-/path/to/autodev-harness.sh
+./autodev-harness.sh
 
 # 其他模式
 ./autodev-harness.sh --test -- "快速验证任务"
@@ -80,12 +82,40 @@ Priority: CLI args > AUTODEV_* env > ANTHROPIC_* env > Defaults
 PROJECT_DESCRIPTION  ← User input (via CLI -- or 000-brief.md)
     ↓
 000-brief.md               ← Created automatically from CLI
+    ↓
 001-research-report.md     ← Research (competitive analysis)
+    ↓
 002-plan.md               ← Plan (user confirms)
+    ↓
+006-ui-spec.md            ← UI Design
+preview/index.html        ← HTML Mockup for browser preview
+    ↓
 003-task-queue.json       ← Tasks (auto-generated)
     ↓
 Development Loop (Generator → Evaluator)
 ```
+
+### Infrastructure Configuration
+
+Before planning, you will be prompted for infrastructure details:
+
+```
+1) Supabase Project URL
+2) Supabase Anon Key (客户端使用)
+3) Supabase Service Role Key (建表/执行SQL)
+```
+
+Config is saved to `.infrastructure.conf` (gitignored).
+
+## Evaluation Criteria
+
+| Dimension | Weight | Description |
+|-----------|--------|-------------|
+| Design Quality | 25% | Visual consistency, colors, layout |
+| Originality | 15% | Original vs template code |
+| Craftsmanship | 25% | Animations, interaction details |
+| Feature Completeness | 15% | Feature completeness |
+| Test Coverage | 20% | Unit test coverage >= 80% |
 
 ## Modes
 
@@ -101,9 +131,21 @@ Development Loop (Generator → Evaluator)
 autodev-harness/
 ├── autodev-harness.sh     # Main entry
 ├── agents/                # Agent prompts
+│   ├── researcher.md
+│   ├── planner.md
+│   ├── ui-design.md       # NEW: UI design agent
+│   ├── taskgen.md
+│   ├── generator.md
+│   └── evaluator.md
 ├── lib/                   # Libraries
-├── config/                # Configuration
-└── tests/                 # Test suite
+│   ├── ui.sh              # UI + infra config collection
+│   ├── claude.sh          # Claude API interaction
+│   ├── files.sh           # File operations
+│   └── state.sh           # State management
+├── config/
+│   ├── harness.config.sh  # Configuration
+│   └── llm-config.sh      # LLM settings
+└── README.md
 ```
 
 ## License
