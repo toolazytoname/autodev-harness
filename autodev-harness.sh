@@ -269,10 +269,10 @@ phase_ui_design() {
 
     # Search Lazyweb for similar designs
     log_step "Searching Lazyweb for design references..."
-    local lazyweb_ref_file="$PROJECT_DIR/.claude/lazyweb-ref.txt"
-    search_lazyweb_refs "$PROJECT_DIR" > "$lazyweb_ref_file" 2>&1 || true
-    if [[ -s "$lazyweb_ref_file" ]]; then
-        log_step "Found design references from Lazyweb"
+    local design_ref_file="$PROJECT_DIR/.claude/design-refs.md"
+    search_design_refs "$PROJECT_DIR" > "$design_ref_file" 2>&1 || true
+    if [[ -s "$design_ref_file" ]]; then
+        log_step "Found multi-source design references"
     fi
 
     while true; do
@@ -290,11 +290,11 @@ $(cat "$plan")
 EOF
 
         # Append Lazyweb references if available
-        if [[ -s "$lazyweb_ref_file" ]]; then
+        if [[ -s "$design_ref_file" ]]; then
             cat >> "$context_file" <<EOF
 
----LAZYWEB REF---
-$(cat "$lazyweb_ref_file")
+---DESIGN REFS---
+$(cat "$design_ref_file")
 EOF
         fi
 

@@ -311,3 +311,143 @@ else:
 
     return 0
 }
+
+# === Search Multiple Design References ===
+search_design_refs() {
+    local project_dir="$1"
+    local plan_file="$project_dir/002-plan.md"
+    local ref_output="$project_dir/.claude/design-refs.md"
+
+    echo "# Design References (Multiple Sources)" > "$ref_output"
+    echo "" >> "$ref_output"
+
+    # 1. Lazyweb References
+    local lazyweb_result
+    lazyweb_result=$(search_lazyweb_refs "$project_dir" 2>/dev/null) || true
+    if [[ -n "$lazyweb_result" && ! "$lazyweb_result" =~ "not configured" ]]; then
+        echo "--- Lazyweb (Real App Screenshots) ---" >> "$ref_output"
+        echo "$lazyweb_result" >> "$ref_output"
+        echo "" >> "$ref_output"
+    fi
+
+    # 2. Web Search for High-Quality Design Examples
+    local search_query="best UI design examples children's app gamification 2024"
+    if [[ -f "$plan_file" ]]; then
+        local plan_content=$(cat "$plan_file" 2>/dev/null | head -200)
+        if echo "$plan_content" | grep -qi "pet\|宠物"; then
+            search_query="best pet care app UI design gamification children"
+        fi
+    fi
+
+    echo "--- Web Design Inspiration ---" >> "$ref_output"
+    echo "# Search query: $search_query" >> "$ref_output"
+    echo "" >> "$ref_output"
+
+    # Use Exa web search if available
+    local web_results=""
+    web_results=$(claude mcp call exa_search "{\"query\":\"$search_query\",\"numResults\":5}" 2>/dev/null) || true
+
+    if [[ -n "$web_results" && ! "$web_results" =~ "error\|unknown command" ]]; then
+        echo "$web_results" | python3 -c "
+import sys, json, re
+raw = sys.stdin.read()
+match = re.search(r'\[.*\]', raw, re.DOTALL)
+if match:
+    try:
+        results = json.loads(match.group())
+        for r in results[:5]:
+            title = r.get('title', '')
+            url = r.get('url', '')
+            snippet = r.get('snippet', '')[:150]
+            print(f'## {title}')
+            print(f'URL: {url}')
+            print(f'{snippet}')
+            print()
+    except: pass
+" 2>/dev/null >> "$ref_output" || true
+    fi
+
+    # 3. Design Principles from ECC Frontend Patterns
+    echo "--- ECC Frontend Patterns (UI Best Practices) ---" >> "$ref_output"
+    cat >> "$ref_output" << 'PATTERNS'
+
+## 设计原则
+
+### 圆润Q萌风格 (Rounded & Cute)
+- 圆角半径: 16-24px (卡片), 12px (按钮), 50% (头像)
+- 柔和阴影: box-shadow with blur 20-40px, opacity 0.1-0.15
+- 大触摸目标: 最小 48x48px
+
+### 色彩系统
+- Primary: 暖橙色 #E85D04 或 成长绿 #059669
+- 背景: 奶油白 #FFFBF7, 纯白 #FFFFFF
+- 强调色: 金黄 #F59E0B, 成功绿 #10B981
+
+### 字体
+- 标题: Nunito (圆润可爱), 28-36px
+- 正文: Inter, 16-18px
+- 行高: 1.5-1.7
+
+### 动效
+- 宠物idle: translateY 浮动 3s ease-in-out infinite
+- 按钮反馈: scale 0.95, 150ms ease-out
+- 页面切换: fade + slide-up, 300ms ease-out
+
+### 组件模式
+- 卡片: 白色背景 + 圆角20px + 柔和阴影
+- 底部导航: 固定底部, 白色背景 + 顶部细线
+- 进度条: 圆角, 渐变色 (绿→橙→红)
+
+### 儿童友好设计
+- 大按钮 (72px+), 高对比度
+- 简单图标 + 文字标签
+- 正向激励 (星星奖励, 成就徽章)
+- 无复杂手势, tap 为主
+
+## 配色参考
+
+| 用途 | 颜色 | Hex |
+|------|------|-----|
+| Primary | 活力橙 | #E85D04 |
+| Secondary | 成长绿 | #059669 |
+| Accent | 金黄 | #F59E0B |
+| Background | 奶油白 | #FFFBF7 |
+| Surface | 纯白 | #FFFFFF |
+| Success | 成功绿 | #10B981 |
+| Warning | 警告橙 | #F59E0B |
+| Error | 错误红 | #EF4444 |
+
+## 布局模式
+
+```
+┌─────────────────────────────────────┐
+│         Header (固定顶部)            │
+│   Logo | 导航标签 | 用户头像          │
+├─────────────────────────────────────┤
+│                                     │
+│         Main Content Area           │
+│      (宠物展示 / 任务列表 / 排行榜)    │
+│                                     │
+├─────────────────────────────────────┤
+│       Mobile Bottom Nav (底部)       │
+│     首页 | 宠物 | 任务 | 排行榜      │
+└─────────────────────────────────────┘
+```
+
+响应式断点:
+- Mobile: < 640px (单列, 底部导航)
+- Tablet: 640px - 1024px (双列)
+- Desktop: > 1024px (三列)
+PATTERNS
+
+    echo "" >> "$ref_output"
+    echo "# Generated at $(date +%Y-%m-%d\ %H:%M:%S)" >> "$ref_output"
+
+    # Also output to stdout for logging
+    cat "$ref_output"
+}
+
+# Alias for backward compatibility
+search_lazyweb_refs_multi() {
+    search_design_refs "$1"
+}
