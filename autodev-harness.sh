@@ -46,10 +46,10 @@ OPTIONS:
     --restart       Restart project (删除状态文件，重新开始)
     --max-iterations N  Set max iterations (default: 15)
 
-PHASES:
+PHASES (执行顺序):
     research   → Research agent (竞争分析)
-    plan       → Plan agent with user feedback (中文计划，可迭代)
-    ui_design  → UI design with user feedback (HTML预览，可迭代)
+    plan       → Plan agent (中文计划，支持用户反馈迭代)
+    ui_design  → UI design with Lazyweb references (HTML预览，支持迭代)
     tasks      → Task generation
     develop    → Generator → Evaluator loop
 
@@ -59,20 +59,25 @@ LLM OPTIONS:
     --model MODEL        Model name
 
 EXAMPLES:
-    # Run with project description (creates 000-brief.md automatically)
+    # 新项目，从命令行描述开始
     $(basename "$0") /path/to/project -- "我要开发一个宠物养成系统"
 
-    # Continue from last checkpoint (auto-detect phase)
+    # 已有 000-brief.md，直接运行
+    cd /path/to/project
+    $(basename "$0")
+
+    # 从断点继续（自动检测当前阶段）
     $(basename "$0") -c /path/to/project
 
-    # Jump to specific phase (skip earlier phases)
+    # 跳转到指定阶段（跳过已完成阶段）
     $(basename "$0") --phase plan /path/to/project
-
-    # Jump to UI design phase (need 001-research-report.md and 002-plan.md)
     $(basename "$0") --phase ui_design /path/to/project
 
-    # Restart from beginning
+    # 重启项目（删除状态文件）
     $(basename "$0") --restart /path/to/project
+
+    # Test mode
+    $(basename "$0") --test /path/to/project -- "Quick validation task"
 EOF
 }
 
