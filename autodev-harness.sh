@@ -180,6 +180,7 @@ phase_plan() {
 }
 
 # === Phase: UI Design ===
+# === Phase: UI Design ===
 phase_ui_design() {
     log_phase "ui_design"
 
@@ -187,7 +188,8 @@ phase_ui_design() {
     local spec_output="$PROJECT_DIR/006-ui-spec.md"
     local html_output="$PROJECT_DIR/preview/index.html"
     local context_file="$PROJECT_DIR/.claude/ui-design-context.md"
-    local temp_output=$(mktemp)
+    local feedback_file="$PROJECT_DIR/.claude/ui-design-feedback.md"
+    local iteration=1
 
     log_step "Reading plan: $plan"
     ensure_file "$plan"
@@ -195,8 +197,11 @@ phase_ui_design() {
     # Create preview directory
     mkdir -p "$PROJECT_DIR/preview"
 
-    # Create context file with project info
-    cat > "$context_file" <<EOF
+    while true; do
+        log_step "━━━ UI Design Iteration $iteration ━━━"
+
+        # Build context: plan + previous spec (if exists) + feedback
+        cat > "$context_file" <<EOF
 # UI Design Context
 
 Project: $PROJECT_DIR
@@ -206,30 +211,47 @@ Plan: $plan
 $(cat "$plan")
 EOF
 
-    log_step "Calling UI design agent..."
-    call_claude "ui-design" "$context_file" > "$temp_output"
+        # If this is iteration > 1, include previous spec and feedback
+        if [[ $iteration -gt 1 ]]; then
+            cat >> "$context_file" <<EOF
 
-    # Split output by delimiter
-    # Find line numbers of key delimiters
-    spec_start=$(awk '/^---SPEC---$/{print NR; exit}' "$temp_output")
-    html_start=$(awk '/^---HTML---$/{print NR; exit}' "$temp_output")
-    html_end=$(awk '/^---END---$/{print NR; exit}' "$temp_output")
+---PREVIOUS SPEC---
+$(cat "$spec_output")
+EOF
+            if [[ -f "$feedback_file" ]]; then
+                cat >> "$context_file" <<EOF
 
-    if [[ -n "$html_start" && -n "$html_end" ]]; then
-        # Extract spec lines (after ---SPEC--- line, before ---HTML--- line)
-        if [[ -n "$spec_start" ]]; then
-            awk "NR>$spec_start && NR<$html_start" "$temp_output" > "$spec_output"
+---USER FEEDBACK---
+$(cat "$feedback_file")
+EOF
+            fi
         fi
-        # Extract HTML lines (after ---HTML--- line, before ---END--- line)
-        awk "NR>$html_start && NR<$html_end" "$temp_output" > "$html_output"
-    elif [[ -n "$html_start" ]]; then
-        # No END marker, just take everything after ---HTML---
-        awk "NR>$html_start" "$temp_output" > "$html_output"
-    else
-        # No HTML found, treat entire output as spec
-        cp "$temp_output" "$spec_output"
-        # Create minimal HTML placeholder
-        cat > "$html_output" <<'HTML'
+
+        log_step "Calling UI design agent..."
+        local temp_output=$(mktemp)
+        call_claude "ui-design" "$context_file" > "$temp_output"
+
+        # Split output by delimiter
+        # Find line numbers of key delimiters
+        spec_start=$(awk '/^---SPEC---$/{print NR; exit}' "$temp_output")
+        html_start=$(awk '/^---HTML---$/{print NR; exit}' "$temp_output")
+        html_end=$(awk '/^---END---$/{print NR; exit}' "$temp_output")
+
+        if [[ -n "$html_start" && -n "$html_end" ]]; then
+            # Extract spec lines (after ---SPEC--- line, before ---HTML--- line)
+            if [[ -n "$spec_start" ]]; then
+                awk "NR>$spec_start && NR<$html_start" "$temp_output" > "$spec_output"
+            fi
+            # Extract HTML lines (after ---HTML--- line, before ---END--- line)
+            awk "NR>$html_start && NR<$html_end" "$temp_output" > "$html_output"
+        elif [[ -n "$html_start" ]]; then
+            # No END marker, just take everything after ---HTML---
+            awk "NR>$html_start" "$temp_output" > "$html_output"
+        else
+            # No HTML found, treat entire output as spec
+            cp "$temp_output" "$spec_output"
+            # Create minimal HTML placeholder
+            cat > "$html_output" <<'HTML'
 <!DOCTYPE html>
 <html>
 <head>
@@ -241,25 +263,51 @@ EOF
 </body>
 </html>
 HTML
-    fi
+        fi
 
-    rm -f "$temp_output"
+        rm -f "$temp_output"
 
-    log_step "UI spec saved: $spec_output"
-    log_step "Preview saved: $html_output"
-    log_step "Open in browser: file://$html_output"
+        log_step "UI spec saved: $spec_output"
+        log_step "Preview saved: $html_output"
+        log_step "Open in browser: file://$html_output"
 
-    # Check if HTML is valid (non-empty and looks like HTML)
-    if [[ ! -s "$html_output" ]] || ! grep -q "<!DOCTYPE html>" "$html_output"; then
-        log_error "Invalid HTML file generated"
-        return 1
-    fi
+        # Check if HTML is valid (non-empty and looks like HTML)
+        if [[ ! -s "$html_output" ]] || ! grep -q "<!DOCTYPE html>" "$html_output"; then
+            log_error "Invalid HTML file generated"
+            rm -f "$feedback_file"
+            return 1
+        fi
 
-    log_step "Waiting for UI design confirmation..."
-    confirm "Do you approve the UI design?"
+        # Ask for user feedback
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📋 UI Design Preview"
+        echo "  Spec: $spec_output"
+        echo "  HTML: file://$html_output"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        read -p "修改意见（或直接回车接受当前设计）: " feedback
+
+        if [[ -z "$feedback" ]]; then
+            # User accepted, clean up and continue
+            rm -f "$feedback_file"
+            log_done "UI design confirmed"
+            break
+        fi
+
+        # Save feedback for next iteration
+        echo "$feedback" > "$feedback_file"
+        log_step "Feedback saved, will regenerate with your意见..."
+
+        ((iteration++))
+        if [[ $iteration -gt 5 ]]; then
+            warn "Max iterations (5) reached, using current design"
+            rm -f "$feedback_file"
+            break
+        fi
+    done
 
     save_state "tasks"
-    log_done "UI design confirmed"
 }
 
 # === Phase: Tasks ===
