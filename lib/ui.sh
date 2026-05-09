@@ -221,3 +221,93 @@ spin() {
 
     printf "    \b\b\b\b"
 }
+
+# === Search Lazyweb for design references ===
+search_lazyweb_refs() {
+    local project_dir="$1"
+    local plan_file="$project_dir/002-plan.md"
+
+    # Check if Lazyweb token exists
+    local token_file="$HOME/.lazyweb/lazyweb_mcp_token"
+    if [[ ! -f "$token_file" ]]; then
+        echo "# Lazyweb not configured (no token file)"
+        return 1
+    fi
+
+    local token
+    token=$(cat "$token_file" 2>/dev/null)
+    if [[ -z "$token" ]]; then
+        echo "# Lazyweb not configured (empty token)"
+        return 1
+    fi
+
+    # Extract key search terms from plan
+    local query="mobile app dashboard UI design"
+    if [[ -f "$plan_file" ]]; then
+        local plan_content
+        plan_content=$(cat "$plan_file" 2>/dev/null | head -200)
+
+        if echo "$plan_content" | grep -qi "pet\|宠物"; then
+            query="pet care app mobile UI"
+        elif echo "$plan_content" | grep -qi "children\|儿童\|kid"; then
+            query="children reward app mobile UI"
+        elif echo "$plan_content" | grep -qi "dashboard"; then
+            query="mobile dashboard UI design"
+        elif echo "$plan_content" | grep -qi "gamification"; then
+            query="gamification mobile app UI rewards"
+        fi
+    fi
+
+    echo "# Lazyweb Design References"
+    echo "# Query: $query"
+    echo ""
+
+    # Try Claude Code MCP call first
+    local result
+    result=$(claude mcp call lazyweb_search "{\"query\":\"$query\",\"limit\":6}" 2>/dev/null) || true
+
+    if [[ -z "$result" ]] || echo "$result" | grep -qi "error\|unknown command"; then
+        # Fallback: direct HTTP request
+        result=$(curl -s "https://www.lazyweb.com/mcp" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"lazyweb_search\",\"arguments\":{\"query\":\"$query\",\"limit\":6}},\"id\":1}" 2>/dev/null) || true
+    fi
+
+    # Parse and format results
+    if [[ -n "$result" ]] && ! echo "$result" | grep -qi "error"; then
+        local tmpfile=$(mktemp)
+        # Write to file preserving raw content (avoid echo which corrupts JSON)
+        printf '%s' "$result" > "$tmpfile"
+        python3 -c "
+import sys, json, re
+with open(sys.argv[1], 'rb') as f:
+    raw = f.read().decode('utf-8', errors='replace')
+match = re.search(r'\{[\s\S]*\}', raw)
+if match:
+    data = json.loads(match.group())
+    results = data.get('result', {}).get('content', [{}])
+    if results:
+        inner_text = results[0].get('text', '{}')
+        inner = json.loads(inner_text)
+        for ref in inner.get('results', []):
+            sim = ref.get('similarity', 0)
+            name = ref.get('companyName', 'Unknown')
+            platform = ref.get('platform', '')
+            cat = ref.get('category', '')
+            desc = ref.get('visionDescription', '')[:200]
+            print(f'## {name} (similarity: {sim:.2f})')
+            print(f'Platform: {platform} | Category: {cat}')
+            print(f'Description: {desc}')
+            print()
+else:
+    print('# Failed to parse Lazyweb response')
+" "$tmpfile" 2>/dev/null || echo "$result" | head -50
+        rm -f "$tmpfile"
+    else
+        echo "# No results from Lazyweb"
+    fi
+
+    return 0
+}
