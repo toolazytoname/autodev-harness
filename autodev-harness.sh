@@ -163,17 +163,72 @@ phase_plan() {
 
     local research="$PROJECT_DIR/001-research-report.md"
     local output="$PROJECT_DIR/002-plan.md"
+    local feedback_file="$PROJECT_DIR/.claude/plan-feedback.md"
+    local context_file="$PROJECT_DIR/.claude/plan-context.md"
+    local iteration=1
 
     log_step "Reading research report: $research"
     ensure_file "$research"
 
-    log_step "Calling planner agent..."
-    call_claude "planner" "$research" "$output"
+    while true; do
+        log_step "━━━ Plan Iteration $iteration ━━━"
 
-    log_step "Plan saved: $output"
+        # Build context: research + previous plan + feedback (for iteration > 1)
+        cat > "$context_file" <<EOF
+# Planning Context
 
-    log_step "Waiting for user confirmation..."
-    confirm_plan "$output"
+---INPUT---
+EOF
+        cat "$research" >> "$context_file"
+
+        if [[ $iteration -gt 1 && -f "$output" ]]; then
+            cat >> "$context_file" <<EOF
+
+---PREVIOUS PLAN---
+$(cat "$output")
+EOF
+            if [[ -f "$feedback_file" ]]; then
+                cat >> "$context_file" <<EOF
+
+---USER FEEDBACK---
+$(cat "$feedback_file")
+EOF
+            fi
+        fi
+
+        log_step "Calling planner agent..."
+        call_claude "planner" "$context_file" "$output"
+
+        log_step "Plan saved: $output"
+
+        # Show plan preview and ask for feedback
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📋 PLAN PREVIEW (first 60 lines)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        head -60 "$output"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        read -p "修改意见（或直接回车接受当前计划）: " feedback
+
+        if [[ -z "$feedback" ]]; then
+            # User accepted
+            rm -f "$feedback_file"
+            break
+        fi
+
+        # Save feedback for next iteration
+        echo "$feedback" > "$feedback_file"
+        log_step "Feedback saved, will regenerate with your意见..."
+
+        ((iteration++))
+        if [[ $iteration -gt 5 ]]; then
+            warn "Max iterations (5) reached, using current plan"
+            rm -f "$feedback_file"
+            break
+        fi
+    done
 
     save_state "ui_design"
     log_done "Plan confirmed"
