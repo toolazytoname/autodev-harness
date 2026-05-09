@@ -40,10 +40,18 @@ OPTIONS:
     --new           New project mode (default)
     --iterate       Iterate on existing project (bug fix / feature)
     --test          Test mode (quick validation, 2-3 iterations)
-    -c, --continue  Continue from last checkpoint
+    -c, --continue  Continue from last checkpoint (自动推断阶段)
+    --phase PHASE   Jump to specific phase (research|plan|ui_design|tasks|develop)
     --status        Show project status
-    --restart       Restart from beginning
+    --restart       Restart project (删除状态文件，重新开始)
     --max-iterations N  Set max iterations (default: 15)
+
+PHASES:
+    research   → Research agent (竞争分析)
+    plan       → Plan agent with user feedback (中文计划，可迭代)
+    ui_design  → UI design with user feedback (HTML预览，可迭代)
+    tasks      → Task generation
+    develop    → Generator → Evaluator loop
 
 LLM OPTIONS:
     --llm-key KEY        LLM API key
@@ -54,15 +62,17 @@ EXAMPLES:
     # Run with project description (creates 000-brief.md automatically)
     $(basename "$0") /path/to/project -- "我要开发一个宠物养成系统"
 
-    # Run in project directory with existing 000-brief.md
-    cd /path/to/project
-    $(basename "$0")
-
-    # Test mode
-    $(basename "$0") --test /path/to/project -- "Quick validation task"
-
-    # Continue from checkpoint
+    # Continue from last checkpoint (auto-detect phase)
     $(basename "$0") -c /path/to/project
+
+    # Jump to specific phase (skip earlier phases)
+    $(basename "$0") --phase plan /path/to/project
+
+    # Jump to UI design phase (need 001-research-report.md and 002-plan.md)
+    $(basename "$0") --phase ui_design /path/to/project
+
+    # Restart from beginning
+    $(basename "$0") --restart /path/to/project
 EOF
 }
 
@@ -77,6 +87,7 @@ parse_args() {
             -c|--continue) ACTION="continue"; shift ;;
             --status) ACTION="status"; shift ;;
             --restart) ACTION="restart"; shift ;;
+            --phase) TARGET_PHASE="$2"; shift 2 ;;
             --max-iterations) MAX_ITERATIONS="$2"; shift 2 ;;
             --llm-key) LLM_API_KEY="$2"; shift 2 ;;
             --llm-url) LLM_URL="$2"; shift 2 ;;
@@ -453,11 +464,25 @@ phase_develop() {
 
 # === Resume Workflow ===
 resume_workflow() {
+    local target_phase="${1:-}"
     log_phase "resume"
-    load_state
 
-    log "Resuming from phase: $CURRENT_PHASE"
-    case "$CURRENT_PHASE" in
+    if [[ -n "$target_phase" ]]; then
+        log "Jumping to phase: $target_phase"
+    else
+        load_state
+        target_phase="$CURRENT_PHASE"
+        log "Resuming from phase: $CURRENT_PHASE"
+    fi
+
+    case "$target_phase" in
+        research)
+            phase_research
+            phase_plan
+            phase_ui_design
+            phase_tasks
+            phase_develop
+            ;;
         plan)
             phase_plan
             phase_ui_design
@@ -477,7 +502,7 @@ resume_workflow() {
             phase_develop
             ;;
         *)
-            error "Unknown phase: $CURRENT_PHASE"
+            error "Unknown phase: $target_phase"
             ;;
     esac
 }
@@ -544,24 +569,32 @@ main() {
     # Create brief from remaining args if provided
     create_brief_from_args "$@"
 
-    # Check for existing state
-    if load_state; then
+    # Handle --phase jump or --continue
+    if [[ -n "$TARGET_PHASE" ]]; then
+        log "🔍 Jumping to phase: $TARGET_PHASE"
+        resume_workflow "$TARGET_PHASE"
+    elif load_state; then
         log "📂 Found existing workflow state"
         if confirm "Continue from checkpoint?"; then
             resume_workflow
-            exit 0
+        else
+            log "Starting fresh..."
+            rm -f "$PROJECT_DIR/state/workflow-state.json"
+            phase_research
+            phase_plan
+            phase_ui_design
+            phase_tasks
+            phase_develop
         fi
+    else
+        # Start fresh
+        log "🆕 Starting new workflow in: $PROJECT_DIR"
+        phase_research
+        phase_plan
+        phase_ui_design
+        phase_tasks
+        phase_develop
     fi
-
-    # Start fresh
-    log "🆕 Starting new workflow in: $PROJECT_DIR"
-
-    # Run phases
-    phase_research
-    phase_plan
-    phase_ui_design
-    phase_tasks
-    phase_develop
 
     log ""
     log "═══════════════════════════════════════════════════════"
