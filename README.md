@@ -1,16 +1,16 @@
 # AutoDevHarness
 
-AI-Powered Development Framework with **Research → Plan → UI Design → Develop** workflow.
+AI-Powered Development Framework with **Research → Plan → UI Design → Tasks → Develop** workflow.
 
 ## Features
 
-- **Four Phases**: Research → Plan → UI Design → Develop
+- **Five Phases**: Research → Plan → UI Design (iterative) → Tasks → Develop
+- **Iterative UI Design**: Preview HTML, provide feedback, regenerate until satisfied
 - **Infrastructure First**: Collect Supabase config before development
-- **Visual UI Preview**: HTML mockup for design verification
+- **Visual UI Preview**: HTML mockup with Tailwind CSS for design verification
 - **Test Coverage Gate**: Enforce >= 80% coverage
 - **Three Modes**: new / iterate / test
 - **Resumable**: Continue from checkpoint
-- **ECC Integration**: Uses everything-claude-code commands
 
 ## Prerequisites
 
@@ -87,12 +87,40 @@ PROJECT_DESCRIPTION  ← User input (via CLI -- or 000-brief.md)
     ↓
 002-plan.md               ← Plan (user confirms)
     ↓
-006-ui-spec.md            ← UI Design
+006-ui-spec.md            ← UI Design (iterative)
 preview/index.html        ← HTML Mockup for browser preview
     ↓
 003-task-queue.json       ← Tasks (auto-generated)
     ↓
 Development Loop (Generator → Evaluator)
+```
+
+### UI Design Phase (Iterative)
+
+After the initial design is generated, you can iterate:
+
+```
+    ↓
+┌─────────────────────────────┐
+│  Preview: file://.../index.html
+│  Spec: 006-ui-spec.md
+└─────────────────────────────┘
+    ↓
+┌─────────────────────────────┐
+│  修改意见? (直接回车接受)    │ ← User provides feedback
+└─────────────────────────────┘
+    ↓
+┌─────────────────────────────┐
+│  N → Agent regenerates      │ ← Agent incorporates feedback
+│      (Plan + Previous + Feedback)
+└─────────────────────────────┘
+    ↓
+┌─────────────────────────────┐
+│  Up to 5 iterations         │
+└─────────────────────────────┘
+    ↓ (once satisfied or max iterations)
+    ↓
+003-task-queue.json
 ```
 
 ### Infrastructure Configuration
@@ -133,7 +161,7 @@ autodev-harness/
 ├── agents/                # Agent prompts
 │   ├── researcher.md
 │   ├── planner.md
-│   ├── ui-design.md       # NEW: UI design agent
+│   ├── ui-design.md       # UI design agent with iterative feedback
 │   ├── taskgen.md
 │   ├── generator.md
 │   └── evaluator.md
