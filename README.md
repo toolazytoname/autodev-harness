@@ -138,29 +138,34 @@ After the initial plan is generated, you can iterate:
 UI Design
 ```
 
-### UI Design Phase (Iterative)
+### UI Design Phase (3 Versions Comparison)
 
-After the initial design is generated, you can iterate:
+UI Design generates 3 versions from different reference sources:
 
 ```
     ↓
+┌─────────────────────────────────────────────┐
+│  [1] Lazyweb:     file://...v1-lazyweb.html │
+│  [2] Web:        file://...v2-web.html     │
+│  [3] ECC:        file://...v3-ecc.html     │
+└─────────────────────────────────────────────┘
+    ↓
 ┌─────────────────────────────┐
-│  Preview: file://.../index.html
-│  Spec: 006-ui-spec.md
+│  选择 (1/2/3) 或输入意见    │
 └─────────────────────────────┘
     ↓
 ┌─────────────────────────────┐
-│  修改意见? (直接回车接受)    │
-└─────────────────────────────┘
-    ↓
-┌─────────────────────────────┐
-│  N → Agent regenerates      │
-│      (Plan + Previous + Feedback)
-└─────────────────────────────┘
-    ↓ (once satisfied or max iterations)
+│  User picks favorite         │ ← Selected version copied to:
+│      or provides feedback    │   preview/index.html
+└─────────────────────────────┘    006-ui-spec.md
     ↓
 Tasks
 ```
+
+Design versions saved to `preview/versions/`:
+- `v1-lazyweb.html` - Lazyweb-inspired (real app screenshots)
+- `v2-web.html` - Web-inspired (Behance/Dribbble cases)
+- `v3-ecc.html` - ECC Patterns-inspired (best practices)
 
 ### Lazyweb Design References
 
