@@ -257,29 +257,135 @@ phase_ui_design() {
     local plan="$PROJECT_DIR/002-plan.md"
     local spec_output="$PROJECT_DIR/006-ui-spec.md"
     local html_output="$PROJECT_DIR/preview/index.html"
-    local context_file="$PROJECT_DIR/.claude/ui-design-context.md"
     local feedback_file="$PROJECT_DIR/.claude/ui-design-feedback.md"
-    local iteration=1
 
     log_step "Reading plan: $plan"
     ensure_file "$plan"
 
-    # Create preview directory
+    # Create preview directories
     mkdir -p "$PROJECT_DIR/preview"
+    mkdir -p "$PROJECT_DIR/preview/versions"
 
-    # Search Lazyweb for similar designs
-    log_step "Searching Lazyweb for design references..."
+    # Search design references
+    log_step "Searching design references..."
     local design_ref_file="$PROJECT_DIR/.claude/design-refs.md"
     search_design_refs "$PROJECT_DIR" > "$design_ref_file" 2>&1 || true
+
+    # Split references by source
+    local lazyweb_ref="$PROJECT_DIR/.claude/ref-lazyweb.md"
+    local web_ref="$PROJECT_DIR/.claude/ref-web.md"
+    local ecc_ref="$PROJECT_DIR/.claude/ref-ecc.md"
+
     if [[ -s "$design_ref_file" ]]; then
-        log_step "Found multi-source design references"
+        log_step "Parsing references by source..."
+        # Extract Lazyweb section
+        awk '/--- Lazyweb/,/--- Web Design/' "$design_ref_file" | grep -v "^---" | grep -v "^$" > "$lazyweb_ref" 2>/dev/null || true
+        # Extract Web section  
+        awk '/--- Web Design/,/--- ECC Frontend/' "$design_ref_file" | grep -v "^---" | grep -v "^$" > "$web_ref" 2>/dev/null || true
+        # Extract ECC section
+        awk '/--- ECC Frontend/,0' "$design_ref_file" | grep -v "^---" > "$ecc_ref" 2>/dev/null || true
     fi
+
+    local iteration=1
+    local chosen_version=""
 
     while true; do
         log_step "━━━ UI Design Iteration $iteration ━━━"
 
-        # Build context: plan + previous spec (if exists) + feedback
-        cat > "$context_file" <<EOF
+        # Generate 3 versions from different reference sources
+        log_step "Generating 3 design versions..."
+
+        # Version 1: Lazyweb-inspired
+        log_step "  [1/3] Lazyweb-inspired..."
+        local ctx1="$PROJECT_DIR/.claude/ui-context-v1.txt"
+        build_ui_context "$plan" "$lazyweb_ref" "" "" > "$ctx1"
+        local out1="$PROJECT_DIR/preview/versions/v1-lazyweb.html"
+        local spec1="$PROJECT_DIR/preview/versions/v1-lazyweb-spec.md"
+        call_claude "ui-design" "$ctx1" > "$PROJECT_DIR/.claude/out-v1.tmp"
+        extract_html "$PROJECT_DIR/.claude/out-v1.tmp" "$spec1" "$out1"
+
+        # Version 2: Web-inspired
+        log_step "  [2/3] Web-inspired..."
+        local ctx2="$PROJECT_DIR/.claude/ui-context-v2.txt"
+        build_ui_context "$plan" "" "$web_ref" "" > "$ctx2"
+        local out2="$PROJECT_DIR/preview/versions/v2-web.html"
+        local spec2="$PROJECT_DIR/preview/versions/v2-web-spec.md"
+        call_claude "ui-design" "$ctx2" > "$PROJECT_DIR/.claude/out-v2.tmp"
+        extract_html "$PROJECT_DIR/.claude/out-v2.tmp" "$spec2" "$out2"
+
+        # Version 3: ECC Patterns-inspired
+        log_step "  [3/3] ECC Patterns-inspired..."
+        local ctx3="$PROJECT_DIR/.claude/ui-context-v3.txt"
+        build_ui_context "$plan" "" "" "$ecc_ref" > "$ctx3"
+        local out3="$PROJECT_DIR/preview/versions/v3-ecc.html"
+        local spec3="$PROJECT_DIR/preview/versions/v3-ecc-spec.md"
+        call_claude "ui-design" "$ctx3" > "$PROJECT_DIR/.claude/out-v3.tmp"
+        extract_html "$PROJECT_DIR/.claude/out-v3.tmp" "$spec3" "$out3"
+
+        # Show comparison
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📋 UI Design Versions Comparison"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "  [1] Lazyweb:     file://$out1"
+        echo "  [2] Web:        file://$out2"
+        echo "  [3] ECC:        file://$out3"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        read -p "选择版本 (1/2/3)，或输入意见重新生成，或回车保存版本1: " choice
+
+        if [[ -z "$choice" ]]; then
+            chosen_version="1"
+        elif [[ "$choice" =~ ^[123]$ ]]; then
+            chosen_version="$choice"
+        else
+            echo "$choice" > "$feedback_file"
+            log_step "Feedback saved, regenerating..."
+            iteration=$((iteration + 1))
+            if [[ $iteration -gt 5 ]]; then
+                warn "Max iterations reached, using version 1"
+                chosen_version="1"
+            fi
+            continue
+        fi
+
+        # Copy chosen version to final output
+        case "$chosen_version" in
+            1)
+                cp "$out1" "$html_output"
+                cp "$spec1" "$spec_output"
+                log_step "Using Lazyweb-inspired version"
+                ;;
+            2)
+                cp "$out2" "$html_output"
+                cp "$spec2" "$spec_output"
+                log_step "Using Web-inspired version"
+                ;;
+            3)
+                cp "$out3" "$html_output"
+                cp "$spec3" "$spec_output"
+                log_step "Using ECC Patterns-inspired version"
+                ;;
+        esac
+
+        log_step "Final design saved: $html_output"
+        rm -f "$feedback_file"
+        break
+    done
+
+    save_state "tasks"
+}
+
+# === Build UI context for specific reference source ===
+build_ui_context() {
+    local plan="$1"
+    local lazyweb_ref="$2"
+    local web_ref="$3"
+    local ecc_ref="$4"
+
+    cat <<EOF
 # UI Design Context
 
 Project: $PROJECT_DIR
@@ -289,56 +395,45 @@ Plan: $plan
 $(cat "$plan")
 EOF
 
-        # Append Lazyweb references if available
-        if [[ -s "$design_ref_file" ]]; then
-            cat >> "$context_file" <<EOF
+    if [[ -s "$lazyweb_ref" ]]; then
+        echo ""
+        echo "---DESIGN REFS (Lazyweb)---"
+        cat "$lazyweb_ref"
+    fi
 
----DESIGN REFS---
-$(cat "$design_ref_file")
-EOF
+    if [[ -s "$web_ref" ]]; then
+        echo ""
+        echo "---DESIGN REFS (Web)---"
+        cat "$web_ref"
+    fi
+
+    if [[ -s "$ecc_ref" ]]; then
+        echo ""
+        echo "---DESIGN REFS (ECC Patterns)---"
+        cat "$ecc_ref"
+    fi
+}
+
+# === Extract HTML from agent output ===
+extract_html() {
+    local temp_output="$1"
+    local spec_out="$2"
+    local html_out="$3"
+
+    local spec_start=$(awk '/^---SPEC---$/{print NR; exit}' "$temp_output")
+    local html_start=$(awk '/^---HTML---$/{print NR; exit}' "$temp_output")
+    local html_end=$(awk '/^---END---$/{print NR; exit}' "$temp_output")
+
+    if [[ -n "$html_start" && -n "$html_end" ]]; then
+        if [[ -n "$spec_start" ]]; then
+            awk "NR>$spec_start && NR<$html_start" "$temp_output" > "$spec_out"
         fi
-
-        # If this is iteration > 1, include previous spec and feedback
-        if [[ $iteration -gt 1 ]]; then
-            cat >> "$context_file" <<EOF
-
----PREVIOUS SPEC---
-$(cat "$spec_output")
-EOF
-            if [[ -f "$feedback_file" ]]; then
-                cat >> "$context_file" <<EOF
-
----USER FEEDBACK---
-$(cat "$feedback_file")
-EOF
-            fi
-        fi
-
-        log_step "Calling UI design agent..."
-        local temp_output=$(mktemp)
-        call_claude "ui-design" "$context_file" > "$temp_output"
-
-        # Split output by delimiter
-        # Find line numbers of key delimiters
-        spec_start=$(awk '/^---SPEC---$/{print NR; exit}' "$temp_output")
-        html_start=$(awk '/^---HTML---$/{print NR; exit}' "$temp_output")
-        html_end=$(awk '/^---END---$/{print NR; exit}' "$temp_output")
-
-        if [[ -n "$html_start" && -n "$html_end" ]]; then
-            # Extract spec lines (after ---SPEC--- line, before ---HTML--- line)
-            if [[ -n "$spec_start" ]]; then
-                awk "NR>$spec_start && NR<$html_start" "$temp_output" > "$spec_output"
-            fi
-            # Extract HTML lines (after ---HTML--- line, before ---END--- line)
-            awk "NR>$html_start && NR<$html_end" "$temp_output" > "$html_output"
-        elif [[ -n "$html_start" ]]; then
-            # No END marker, just take everything after ---HTML---
-            awk "NR>$html_start" "$temp_output" > "$html_output"
-        else
-            # No HTML found, treat entire output as spec
-            cp "$temp_output" "$spec_output"
-            # Create minimal HTML placeholder
-            cat > "$html_output" <<'HTML'
+        awk "NR>$html_start && NR<$html_end" "$temp_output" > "$html_out"
+    elif [[ -n "$html_start" ]]; then
+        awk "NR>$html_start" "$temp_output" > "$html_out"
+    else
+        cp "$temp_output" "$spec_out"
+        cat > "$html_out" <<'HTML'
 <!DOCTYPE html>
 <html>
 <head>
@@ -346,55 +441,11 @@ EOF
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="p-8">
-  <div class="text-red-500">HTML not generated. Please check spec.</div>
+  <div class="text-red-500">HTML not generated.</div>
 </body>
 </html>
 HTML
-        fi
-
-        rm -f "$temp_output"
-
-        log_step "UI spec saved: $spec_output"
-        log_step "Preview saved: $html_output"
-        log_step "Open in browser: file://$html_output"
-
-        # Check if HTML is valid (non-empty and looks like HTML)
-        if [[ ! -s "$html_output" ]] || ! grep -q "<!DOCTYPE html>" "$html_output"; then
-            log_error "Invalid HTML file generated"
-            rm -f "$feedback_file"
-            return 1
-        fi
-
-        # Ask for user feedback
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "📋 UI Design Preview"
-        echo "  Spec: $spec_output"
-        echo "  HTML: file://$html_output"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        read -p "修改意见（或直接回车接受当前设计）: " feedback
-
-        if [[ -z "$feedback" ]]; then
-            # User accepted, clean up and continue
-            rm -f "$feedback_file"
-            log_done "UI design confirmed"
-            break
-        fi
-
-        # Save feedback for next iteration
-        echo "$feedback" > "$feedback_file"
-        log_step "Feedback saved, will regenerate with your意见..."
-
-        ((iteration++))
-        if [[ $iteration -gt 5 ]]; then
-            warn "Max iterations (5) reached, using current design"
-            rm -f "$feedback_file"
-            break
-        fi
-    done
-
-    save_state "tasks"
+    fi
 }
 
 # === Phase: Tasks ===
