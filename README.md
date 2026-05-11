@@ -166,11 +166,16 @@ Design versions saved to `preview/versions/`:
 - `v1-lazyweb.html` - Lazyweb-inspired (real app screenshots)
 - `v2-web.html` - Web-inspired (Behance/Dribbble cases)
 - `v3-ecc.html` - ECC Patterns-inspired (best practices)
+- `v4-uiuxpro.html` - UI/UX Pro Max-inspired (design system)
 
-### Lazyweb Design References
+### Design References (4 Sources)
 
-During UI design phase, the system searches Lazyweb for similar app screenshots
-and passes them to the UI design agent for grounded, real-world inspiration.
+During UI design phase, the system aggregates design references from 4 sources:
+
+1. **Lazyweb** - Real app screenshots from 257k+ apps for grounded inspiration
+2. **Web** - High-quality design cases from Behance/Dribbble
+3. **ECC Patterns** - Frontend best practices (rounded style, warm colors, child-friendly)
+4. **UI/UX Pro Max** - Complete design system (colors, typography, style categories)
 
 ### Infrastructure Configuration
 
