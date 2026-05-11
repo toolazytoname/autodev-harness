@@ -275,15 +275,18 @@ phase_ui_design() {
     local lazyweb_ref="$PROJECT_DIR/.claude/ref-lazyweb.md"
     local web_ref="$PROJECT_DIR/.claude/ref-web.md"
     local ecc_ref="$PROJECT_DIR/.claude/ref-ecc.md"
+    local uiuxpro_ref="$PROJECT_DIR/.claude/ref-uiuxpro.md"
 
     if [[ -s "$design_ref_file" ]]; then
         log_step "Parsing references by source..."
         # Extract Lazyweb section
         awk '/--- Lazyweb/,/--- Web Design/' "$design_ref_file" | grep -v "^---" | grep -v "^$" > "$lazyweb_ref" 2>/dev/null || true
-        # Extract Web section  
+        # Extract Web section
         awk '/--- Web Design/,/--- ECC Frontend/' "$design_ref_file" | grep -v "^---" | grep -v "^$" > "$web_ref" 2>/dev/null || true
         # Extract ECC section
-        awk '/--- ECC Frontend/,0' "$design_ref_file" | grep -v "^---" > "$ecc_ref" 2>/dev/null || true
+        awk '/--- ECC Frontend/,/--- UI.DEV Pro Max/' "$design_ref_file" | grep -v "^---" > "$ecc_ref" 2>/dev/null || true
+        # Extract UI/UX Pro Max section
+        awk '/--- UI.DEV Pro Max/,0' "$design_ref_file" | grep -v "^---" > "$uiuxpro_ref" 2>/dev/null || true
     fi
 
     local iteration=1
@@ -292,11 +295,11 @@ phase_ui_design() {
     while true; do
         log_step "━━━ UI Design Iteration $iteration ━━━"
 
-        # Generate 3 versions from different reference sources
-        log_step "Generating 3 design versions..."
+        # Generate 4 versions from different reference sources
+        log_step "Generating 4 design versions..."
 
         # Version 1: Lazyweb-inspired
-        log_step "  [1/3] Lazyweb-inspired..."
+        log_step "  [1/4] Lazyweb-inspired..."
         local ctx1="$PROJECT_DIR/.claude/ui-context-v1.txt"
         build_ui_context "$plan" "$lazyweb_ref" "" "" > "$ctx1"
         local out1="$PROJECT_DIR/preview/versions/v1-lazyweb.html"
@@ -305,7 +308,7 @@ phase_ui_design() {
         extract_html "$PROJECT_DIR/.claude/out-v1.tmp" "$spec1" "$out1"
 
         # Version 2: Web-inspired
-        log_step "  [2/3] Web-inspired..."
+        log_step "  [2/4] Web-inspired..."
         local ctx2="$PROJECT_DIR/.claude/ui-context-v2.txt"
         build_ui_context "$plan" "" "$web_ref" "" > "$ctx2"
         local out2="$PROJECT_DIR/preview/versions/v2-web.html"
@@ -314,7 +317,7 @@ phase_ui_design() {
         extract_html "$PROJECT_DIR/.claude/out-v2.tmp" "$spec2" "$out2"
 
         # Version 3: ECC Patterns-inspired
-        log_step "  [3/3] ECC Patterns-inspired..."
+        log_step "  [3/4] ECC Patterns-inspired..."
         local ctx3="$PROJECT_DIR/.claude/ui-context-v3.txt"
         build_ui_context "$plan" "" "" "$ecc_ref" > "$ctx3"
         local out3="$PROJECT_DIR/preview/versions/v3-ecc.html"
@@ -322,23 +325,33 @@ phase_ui_design() {
         call_claude "ui-design" "$ctx3" > "$PROJECT_DIR/.claude/out-v3.tmp"
         extract_html "$PROJECT_DIR/.claude/out-v3.tmp" "$spec3" "$out3"
 
+        # Version 4: UI/UX Pro Max-inspired
+        log_step "  [4/4] UI/UX Pro Max-inspired..."
+        local ctx4="$PROJECT_DIR/.claude/ui-context-v4.txt"
+        build_ui_context "$plan" "" "" "" "$uiuxpro_ref" > "$ctx4"
+        local out4="$PROJECT_DIR/preview/versions/v4-uiuxpro.html"
+        local spec4="$PROJECT_DIR/preview/versions/v4-uiuxpro-spec.md"
+        call_claude "ui-design" "$ctx4" > "$PROJECT_DIR/.claude/out-v4.tmp"
+        extract_html "$PROJECT_DIR/.claude/out-v4.tmp" "$spec4" "$out4"
+
         # Show comparison
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "📋 UI Design Versions Comparison"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
-        echo "  [1] Lazyweb:     file://$out1"
-        echo "  [2] Web:        file://$out2"
-        echo "  [3] ECC:        file://$out3"
+        echo "  [1] Lazyweb:         file://$out1"
+        echo "  [2] Web:            file://$out2"
+        echo "  [3] ECC:            file://$out3"
+        echo "  [4] UI/UX Pro Max:  file://$out4"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
-        read -p "选择版本 (1/2/3)，或输入意见重新生成，或回车保存版本1: " choice
+        read -p "选择版本 (1/2/3/4)，或输入意见重新生成，或回车保存版本1: " choice
 
         if [[ -z "$choice" ]]; then
             chosen_version="1"
-        elif [[ "$choice" =~ ^[123]$ ]]; then
+        elif [[ "$choice" =~ ^[1234]$ ]]; then
             chosen_version="$choice"
         else
             echo "$choice" > "$feedback_file"
@@ -368,6 +381,11 @@ phase_ui_design() {
                 cp "$spec3" "$spec_output"
                 log_step "Using ECC Patterns-inspired version"
                 ;;
+            4)
+                cp "$out4" "$html_output"
+                cp "$spec4" "$spec_output"
+                log_step "Using UI/UX Pro Max-inspired version"
+                ;;
         esac
 
         log_step "Final design saved: $html_output"
@@ -384,8 +402,9 @@ build_ui_context() {
     local lazyweb_ref="$2"
     local web_ref="$3"
     local ecc_ref="$4"
+    local uiuxpro_ref="$5"
 
-    cat <<EOF
+    cat <<'UIEOF'
 # UI Design Context
 
 Project: $PROJECT_DIR
@@ -393,7 +412,7 @@ Plan: $plan
 
 ---PLAN---
 $(cat "$plan")
-EOF
+UIEOF
 
     if [[ -s "$lazyweb_ref" ]]; then
         echo ""
@@ -411,6 +430,12 @@ EOF
         echo ""
         echo "---DESIGN REFS (ECC Patterns)---"
         cat "$ecc_ref"
+    fi
+
+    if [[ -s "$uiuxpro_ref" ]]; then
+        echo ""
+        echo "---DESIGN REFS (UI/UX Pro Max)---"
+        cat "$uiuxpro_ref"
     fi
 }
 

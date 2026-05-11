@@ -312,6 +312,59 @@ else:
     return 0
 }
 
+# === Search UI/UX Pro Max for Design System ===
+search_uiuxpromax_refs() {
+    local project_dir="$1"
+    local plan_file="$project_dir/002-plan.md"
+
+    # Find the ui-ux-pro-max search script
+    local search_script=""
+    for dir in \
+        "$HOME/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/src/ui-ux-pro-max/scripts/search.py" \
+        "$HOME/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/cli/assets/scripts/search.py"; do
+        if [[ -f "$dir" ]]; then
+            search_script="$dir"
+            break
+        fi
+    done
+
+    if [[ -z "$search_script" ]]; then
+        echo "# UI/UX Pro Max not available (script not found)"
+        return 1
+    fi
+
+    # Extract keywords from plan
+    local query="mobile app dashboard children gamification"
+    if [[ -f "$plan_file" ]]; then
+        local plan_content=$(cat "$plan_file" 2>/dev/null | head -100)
+        if echo "$plan_content" | grep -qi "pet\|宠物"; then
+            query="pet care app children gamification reward"
+        elif echo "$plan_content" | grep -qi "children\|儿童\|kid"; then
+            query="children reward app gamification mobile"
+        fi
+    fi
+
+    # Get data dir for the script
+    local data_dir=$(dirname "$search_script")/../data
+    export PYTHONPATH=$(dirname "$search_script")/..:$PYTHONPATH
+
+    echo "# UI/UX Pro Max Design System"
+    echo "# Query: $query"
+    echo ""
+
+    # Run the search script with design-system flag
+    local result
+    result=$(cd "$(dirname "$search_script")" && python3 search.py "$query" --design-system -f markdown 2>/dev/null) || true
+
+    if [[ -n "$result" ]]; then
+        echo "$result"
+    else
+        echo "# No results from UI/UX Pro Max"
+    fi
+
+    return 0
+}
+
 # === Search Multiple Design References ===
 search_design_refs() {
     local project_dir="$1"
@@ -439,6 +492,15 @@ if match:
 - Tablet: 640px - 1024px (双列)
 - Desktop: > 1024px (三列)
 PATTERNS
+
+    # 4. UI/UX Pro Max Design System
+    local uiuxpro_result
+    uiuxpro_result=$(search_uiuxpromax_refs "$project_dir" 2>/dev/null) || true
+    if [[ -n "$uiuxpro_result" && ! "$uiuxpro_result" =~ "not available" ]]; then
+        echo "" >> "$ref_output"
+        echo "--- UI/UX Pro Max (Design System) ---" >> "$ref_output"
+        echo "$uiuxpro_result" >> "$ref_output"
+    fi
 
     echo "" >> "$ref_output"
     echo "# Generated at $(date +%Y-%m-%d\ %H:%M:%S)" >> "$ref_output"
