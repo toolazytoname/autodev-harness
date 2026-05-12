@@ -498,7 +498,7 @@ PATTERNS
     uiuxpro_result=$(search_uiuxpromax_refs "$project_dir" 2>/dev/null) || true
     if [[ -n "$uiuxpro_result" && ! "$uiuxpro_result" =~ "not available" ]]; then
         echo "" >> "$ref_output"
-        echo "--- UI/UX Pro Max (Design System) ---" >> "$ref_output"
+        echo "--- UI.DEV Pro Max ---" >> "$ref_output"
         echo "$uiuxpro_result" >> "$ref_output"
     fi
 

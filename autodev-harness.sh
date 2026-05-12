@@ -404,15 +404,15 @@ build_ui_context() {
     local ecc_ref="$4"
     local uiuxpro_ref="$5"
 
-    cat <<'UIEOF'
-# UI Design Context
-
-Project: $PROJECT_DIR
-Plan: $plan
-
----PLAN---
-$(cat "$plan")
-UIEOF
+    {
+        echo "# UI Design Context"
+        echo ""
+        echo "Project: $PROJECT_DIR"
+        echo "Plan: $plan"
+        echo ""
+        echo "---PLAN---"
+        cat "$plan"
+    }
 
     if [[ -s "$lazyweb_ref" ]]; then
         echo ""
