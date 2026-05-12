@@ -445,6 +445,7 @@ extract_html() {
     local spec_out="$2"
     local html_out="$3"
 
+    # Try markers first (preferred format)
     local spec_start=$(awk '/^---SPEC---$/{print NR; exit}' "$temp_output")
     local html_start=$(awk '/^---HTML---$/{print NR; exit}' "$temp_output")
     local html_end=$(awk '/^---END---$/{print NR; exit}' "$temp_output")
@@ -454,11 +455,30 @@ extract_html() {
             awk "NR>$spec_start && NR<$html_start" "$temp_output" > "$spec_out"
         fi
         awk "NR>$html_start && NR<$html_end" "$temp_output" > "$html_out"
-    elif [[ -n "$html_start" ]]; then
+        return 0
+    fi
+
+    # Fallback: try markdown code fences (\`\`\`html ... \`\`\`)
+    local fence_start=$(awk '/^\`\`\`html$/{print NR; exit}' "$temp_output")
+    local fence_end=$(awk '/^\`\`\`$/{print NR; exit}' "$temp_output")
+
+    if [[ -n "$fence_start" && -n "$fence_end" && "$fence_end" -gt "$fence_start" ]]; then
+        if [[ -n "$spec_start" && "$spec_start" -lt "$fence_start" ]]; then
+            awk "NR>$spec_start && NR<$fence_start" "$temp_output" > "$spec_out"
+        fi
+        awk "NR>$fence_start && NR<$fence_end" "$temp_output" > "$html_out"
+        return 0
+    fi
+
+    # Fallback: if only html_start found (no END), grab everything after it
+    if [[ -n "$html_start" ]]; then
         awk "NR>$html_start" "$temp_output" > "$html_out"
-    else
-        cp "$temp_output" "$spec_out"
-        cat > "$html_out" <<'HTML'
+        return 0
+    fi
+
+    # Last resort: copy as-is for spec, placeholder for html
+    cp "$temp_output" "$spec_out"
+    cat > "$html_out" <<'HTML'
 <!DOCTYPE html>
 <html>
 <head>
@@ -470,7 +490,6 @@ extract_html() {
 </body>
 </html>
 HTML
-    fi
 }
 
 # === Phase: Tasks ===
