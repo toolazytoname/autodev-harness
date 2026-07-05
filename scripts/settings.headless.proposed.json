@@ -1,0 +1,44 @@
+{
+  "_说明": "run-tasks.sh 无头会话的权限白名单提案。确认后手动改名/合并到 .claude/settings.local.json 生效。deny 优先于 allow。",
+  "permissions": {
+    "allow": [
+      "Read(//Users/lazy/Code/crack/autodev-harness/**)",
+      "Write(//Users/lazy/Code/crack/autodev-harness/**)",
+      "Edit(//Users/lazy/Code/crack/autodev-harness/**)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(grep *)",
+      "Bash(rg *)",
+      "Bash(find *)",
+      "Bash(jq *)",
+      "Bash(mkdir *)",
+      "Bash(chmod +x scripts/*)",
+      "Bash(bash -n *)",
+      "Bash(bash tests/*)",
+      "Bash(bats *)",
+      "Bash(python3 *)",
+      "Bash(pytest *)",
+      "Bash(python -m pytest *)",
+      "Bash(pip install *)",
+      "Bash(npm run *)",
+      "Bash(npm test *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git worktree *)",
+      "Bash(git branch *)",
+      "Bash(gh search *)",
+      "WebSearch"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(rm -rf *)",
+      "Read(//Users/lazy/Code/crack/autodev-harness/.infrastructure.conf)"
+    ]
+  }
+}
