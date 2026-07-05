@@ -44,7 +44,7 @@ write_json() {
 
     if [[ -f "$file" ]]; then
         # Update existing value
-        sed -i '' "s/\"$key\": \"[^\"]*\"/\"$key\": \"$value\"/" "$file"
+        sed -i "s/\"$key\": \"[^\"]*\"/\"$key\": \"$value\"/" "$file"
     else
         # Create new file
         cat > "$file" <<EOF
@@ -65,7 +65,8 @@ get_next_task() {
     fi
 
     # Extract next pending task ID - handle both "id": "xxx" and "id":"xxx" formats
-    grep -oE '"id":"[^"]*"' "$queue_file" | head -1 | sed 's/"id":"//;s/"//'
+    # Handle optional whitespace between key and colon, and between colon and value
+    grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]*"' "$queue_file" | head -1 | sed 's/"id"[[:space:]]*:[[:space:]]*"//;s/"$//'
 
 }
 
@@ -78,6 +79,7 @@ complete_task() {
         return
     fi
 
-    # Mark task as completed (simple sed replacement)
-    sed -i '' "s/\"$task_id\"/\"${task_id}_done\"/" "$queue_file"
+    # Mark task as completed - only replace the "id" field value, not occurrences in dependencies
+    # Pattern: "id": "task-001" (with optional whitespace around colon and comma)
+    sed -i "s/\"id\":[[:space:]]*\"$task_id\"/\"id\": \"${task_id}_done\"/" "$queue_file"
 }

@@ -145,7 +145,7 @@ run_evaluator() {
 
     call_claude "evaluator" > "$feedback_file"
 
-    local score=$(grep -oP '\*\*TOTAL\*\*.*?(\d+\.\d+)' "$feedback_file" | grep -oP '\d+\.\d+' | head -1)
+    local score=$(grep -oE '\*\*TOTAL\*\*[^[:digit:]]*[[:digit:]]+\.[[:digit:]]+' "$feedback_file" | grep -oE '[[:digit:]]+\.[[:digit:]]+' | head -1)
 
     log_step "Score: ${score:-0}"
     echo "${score:-0}"
@@ -156,11 +156,12 @@ is_score_passed() {
     local score="$1"
 
     if command -v bc &>/dev/null; then
-        $(echo "$score >= $PASS_THRESHOLD" | bc -l)
+        # Use bc to compare floats; bc outputs 1 if true, 0 if false
+        local result=$(echo "$score >= $PASS_THRESHOLD" | bc -l)
+        [[ "$result" == "1" ]]
     else
-        local score_int=$(echo "$score * 10" | bc 2>/dev/null || echo "0")
-        local threshold_int=$(echo "$PASS_THRESHOLD * 10" | bc 2>/dev/null || echo "0")
-        [[ $score_int -ge $threshold_int ]]
+        # Fallback using awk (no bc dependency required)
+        awk -v s="$score" -v t="$PASS_THRESHOLD" 'BEGIN { exit (!(s >= t)) }'
     fi
 }
 
