@@ -1,4 +1,4 @@
-"""Tests for harness.config.reviewers module and reviewer prompt files."""
+"""Tests for harness.reviewers module and reviewer prompt files."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from config.reviewers import ReviewerAssembly, ReviewerConfig
+from harness.reviewers import ReviewerAssembly, ReviewerConfig
 
 
 # ---------------------------------------------------------------------------

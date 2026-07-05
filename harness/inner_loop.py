@@ -110,6 +110,23 @@ def _run_git(
         raise InnerLoopError(f"git {' '.join(args)} timed out after {timeout}s") from exc
 
 
+def get_current_branch(project_dir: Path) -> str:
+    """Return the branch currently checked out in project_dir."""
+    proc = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    branch = proc.stdout.strip()
+    if proc.returncode != 0 or not branch:
+        raise InnerLoopError(
+            f"Cannot determine current branch in {project_dir}: {proc.stderr.strip()}"
+        )
+    return branch
+
+
 def create_worktree(
     project_dir: Path,
     task_id: str,
@@ -123,18 +140,7 @@ def create_worktree(
     branch_name = f"task/{task_id}"
     worktree_path = project_dir / ".worktrees" / branch_name
 
-    # Determine base ref
-    if base_branch:
-        ref = base_branch
-    else:
-        # Use the current branch or SHA
-        ref = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        ).stdout.strip()
+    ref = base_branch or get_current_branch(project_dir)
 
     _run_git(
         "worktree", "add",
@@ -149,8 +155,14 @@ def create_worktree(
 def merge_worktree(
     project_dir: Path,
     task_id: str,
+    base_branch: Optional[str] = None,
 ) -> None:
-    """Merge the task worktree branch into the current branch and remove the worktree."""
+    """Merge the task worktree branch into the base branch and remove the worktree.
+
+    ``base_branch`` defaults to whatever branch is currently checked out in
+    ``project_dir`` (the branch the worktree was created from). The branch
+    named "main" is never assumed.
+    """
     branch_name = f"task/{task_id}"
     worktree_path = project_dir / ".worktrees" / branch_name
 
@@ -159,10 +171,12 @@ def merge_worktree(
     if not worktree_root.exists():
         raise InnerLoopError(f"No worktree root found at {worktree_root}")
 
-    # Checkout main branch in project_dir and merge
-    _run_git("checkout", "main", cwd=project_dir)
+    target = base_branch or get_current_branch(project_dir)
+    current = get_current_branch(project_dir)
+    if current != target:
+        _run_git("checkout", target, cwd=project_dir)
     try:
-        _run_git("merge", "--no-ff", f"task/{task_id}", cwd=project_dir)
+        _run_git("merge", "--no-ff", branch_name, cwd=project_dir)
     except InnerLoopError:
         # Merge conflict — leave the worktree intact for debugging
         raise
@@ -269,12 +283,17 @@ def run_generator(
 # ---------------------------------------------------------------------------
 
 
-def get_worktree_diff(project_dir: Path, task_id: str) -> str:
-    """Return the diff of the task branch vs main."""
+def get_worktree_diff(
+    project_dir: Path,
+    task_id: str,
+    base_branch: Optional[str] = None,
+) -> str:
+    """Return the diff of the task branch vs the base branch."""
     branch_name = f"task/{task_id}"
+    base = base_branch or get_current_branch(project_dir)
     try:
         proc = subprocess.run(
-            ["git", "diff", "main", branch_name, "--"],
+            ["git", "diff", base, branch_name, "--"],
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -285,12 +304,17 @@ def get_worktree_diff(project_dir: Path, task_id: str) -> str:
         return ""
 
 
-def get_worktree_files(project_dir: Path, task_id: str) -> list[str]:
-    """Return the list of files changed in the task branch."""
+def get_worktree_files(
+    project_dir: Path,
+    task_id: str,
+    base_branch: Optional[str] = None,
+) -> list[str]:
+    """Return the list of files changed in the task branch vs the base branch."""
     branch_name = f"task/{task_id}"
+    base = base_branch or get_current_branch(project_dir)
     try:
         proc = subprocess.run(
-            ["git", "diff", "--name-only", "main", branch_name, "--"],
+            ["git", "diff", "--name-only", base, branch_name, "--"],
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -644,7 +668,7 @@ def run_inner_loop(
     if config is None:
         config = LoopConfig()
 
-    from config.reviewers import ReviewerAssembly
+    from harness.reviewers import ReviewerAssembly
 
     assembly = ReviewerAssembly()
     reviewer_names = assembly.get_reviewer_names(task_kind)
@@ -664,8 +688,9 @@ def run_inner_loop(
     # ---------------------------------------------------------------------------
     # Create worktree for this task
     # ---------------------------------------------------------------------------
+    base_branch = config.base_branch or get_current_branch(project_dir)
     try:
-        worktree_path = create_worktree(project_dir, task_id, base_branch=config.base_branch)
+        worktree_path = create_worktree(project_dir, task_id, base_branch=base_branch)
     except Exception as exc:
         raise InnerLoopError(f"Failed to create worktree for task {task_id}: {exc}") from exc
 
@@ -706,8 +731,8 @@ def run_inner_loop(
             # -------------------------------------------------------------------
             # Step 2: Reviewers (parallel)
             # -------------------------------------------------------------------
-            diff_text = get_worktree_diff(project_dir, task_id)
-            changed_files = get_worktree_files(project_dir, task_id)
+            diff_text = get_worktree_diff(project_dir, task_id, base_branch=base_branch)
+            changed_files = get_worktree_files(project_dir, task_id, base_branch=base_branch)
 
             cards, reviewer_usages = run_reviewers_parallel(
                 adapter=adapter,
@@ -738,7 +763,7 @@ def run_inner_loop(
             if passed:
                 # Gate passed — merge and commit
                 try:
-                    merge_worktree(project_dir, task_id)
+                    merge_worktree(project_dir, task_id, base_branch=base_branch)
                 except InnerLoopError as exc:
                     # Merge conflict — escalate
                     write_escalation_report(

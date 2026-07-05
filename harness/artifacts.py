@@ -34,6 +34,14 @@ class Phase(str, Enum):
     UI = "ui"
     DEVELOP = "develop"
 
+    @classmethod
+    def _missing_(cls, value: object) -> Optional["Phase"]:
+        """Accept legacy bash phase names (e.g. 'ui_design' → UI)."""
+        aliases = {"ui_design": cls.UI, "init": cls.BRIEF}
+        if isinstance(value, str):
+            return aliases.get(value)
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models (all frozen/immutable)
@@ -133,10 +141,12 @@ class TaskStatus(str, Enum):
 class Task(pydantic.BaseModel):
     """Single task in the task queue."""
 
-    model_config = pydantic.ConfigDict(frozen=True)
+    model_config = pydantic.ConfigDict(frozen=True, populate_by_name=True)
 
     id: str
-    title: str
+    title: str = pydantic.Field(
+        validation_alias=pydantic.AliasChoices("title", "name")
+    )
     description: Optional[str] = None
     status: TaskStatus = TaskStatus.PENDING
     dependencies: list[str] = pydantic.Field(default_factory=list)

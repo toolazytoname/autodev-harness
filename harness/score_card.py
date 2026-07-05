@@ -149,7 +149,7 @@ def extract_json_from_fenced(text: str) -> str:
 def get_score_card_dir(project_dir: Path, task_id: str) -> Path:
     """Return the directory path for a task's score cards."""
     # Normalise "task-1" → "1" to avoid "task-task-1"
-    safe_id = task_id.lstrip("task-")
+    safe_id = task_id.removeprefix("task-")
     return project_dir / "score-cards" / f"task-{safe_id}"
 
 
