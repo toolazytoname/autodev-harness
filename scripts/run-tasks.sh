@@ -31,6 +31,15 @@ SESSION_TIMEOUT="${SESSION_TIMEOUT:-3600}"  # 单会话最长 1h
 FROM_TASK="${1:?用法: run-tasks.sh <FROM> <TO>，例如 run-tasks.sh T01 T06}"
 TO_TASK="${2:?用法: run-tasks.sh <FROM> <TO>，例如 run-tasks.sh T01 T06}"
 
+# Preflight：jq 缺了就早失败。少了它 verdict_passed() 会把 valid JSON 误判为 invalid，
+# 然后每任务默默跑满 3 轮再撞上限，浪费 doer/verifier token。
+command -v jq >/dev/null 2>&1 || {
+    echo "❌ 缺少 jq（解析 .runner/verdicts/*.json 用）。" >&2
+    echo "   安装:  apt-get install jq   # Debian/Ubuntu" >&2
+    echo "          brew install jq      # macOS" >&2
+    exit 1
+}
+
 mkdir -p "$RUNNER_DIR/verdicts" "$RUNNER_DIR/feedback" "$RUNNER_DIR/escalation" "$LOG_DIR"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
