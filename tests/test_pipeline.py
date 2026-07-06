@@ -65,8 +65,19 @@ def project_dir(tmp_path):
 
 
 def make_pipeline(project_dir, adapter, router, agents_dir, **config_kwargs):
+    # Extract kwargs that belong to Pipeline.__init__ rather than PipelineConfig
+    # so callers can pass linear_sync=... through this helper.
+    pipeline_kwargs = {}
+    if "linear_sync" in config_kwargs:
+        pipeline_kwargs["linear_sync"] = config_kwargs.pop("linear_sync")
     config = PipelineConfig(project_dir=project_dir, log=lambda _msg: None, **config_kwargs)
-    return Pipeline(config, adapter=adapter, router=router, agents_dir=agents_dir)
+    return Pipeline(
+        config,
+        adapter=adapter,
+        router=router,
+        agents_dir=agents_dir,
+        **pipeline_kwargs,
+    )
 
 
 TASK_QUEUE_JSON = json.dumps(
@@ -206,6 +217,34 @@ class TestPhases:
         assert path.exists()
         # The decision should have been recorded in usage.
         mock_router.record.assert_called_with("research", adapter.run.return_value.usage)
+        # T12: phase_tasks must call LinearSync.sync_tasks_phase with
+        # the parsed task queue and then print the progress link.
+        from harness.linear_sync import LinearProject
+
+        (project_dir / "002-plan.md").write_text("# 计划")
+        adapter = MagicMock()
+        adapter.run.return_value = _agent_result(TASK_QUEUE_JSON)
+        fake_sync = MagicMock()
+        fake_sync.sync_tasks_phase.return_value = LinearProject(
+            id="proj-1", name="P", url="https://linear.app/x"
+        )
+        p = make_pipeline(project_dir, adapter, mock_router, agents_dir, linear_sync=fake_sync)
+        p.phase_tasks()
+        fake_sync.sync_tasks_phase.assert_called_once()
+        fake_sync.print_progress_link.assert_called_once()
+        adapter = MagicMock()
+        adapter.run.return_value = _agent_result(
+            "# 研究报告\n\n"
+            "## 复用决策表\n\n"
+            "| 候选 | URL | 成熟度 | 覆盖% | 决策 | 理由 |\n"
+            "|------|-----|--------|-------|------|------|\n"
+            "| acme/widget | https://github.com/acme/widget | active | 80 | wrap | 覆盖核心功能 |\n"
+        )
+        p = make_pipeline(project_dir, adapter, mock_router, agents_dir)
+        path = p.phase_research()
+        assert path.exists()
+        # The decision should have been recorded in usage.
+        mock_router.record.assert_called_with("research", adapter.run.return_value.usage)
 
     def test_plan_auto_approves_non_tty(self, project_dir, mock_router, agents_dir):
         (project_dir / "001-research-report.md").write_text("# 研究报告")
@@ -259,6 +298,23 @@ class TestPhases:
         assert path.exists()
         assert len(queue.tasks) == 2
         assert queue.tasks[0].title == "实现数据层"  # taskgen "name" alias
+
+    def test_phase_tasks_creates_linear_issues(self, project_dir, mock_router, agents_dir):
+        # T12: phase_tasks must call LinearSync.sync_tasks_phase with
+        # the parsed task queue and then print the progress link.
+        from harness.linear_sync import LinearProject
+
+        (project_dir / "002-plan.md").write_text("# 计划")
+        adapter = MagicMock()
+        adapter.run.return_value = _agent_result(TASK_QUEUE_JSON)
+        fake_sync = MagicMock()
+        fake_sync.sync_tasks_phase.return_value = LinearProject(
+            id="proj-1", name="P", url="https://linear.app/x"
+        )
+        p = make_pipeline(project_dir, adapter, mock_router, agents_dir, linear_sync=fake_sync)
+        p.phase_tasks()
+        fake_sync.sync_tasks_phase.assert_called_once()
+        fake_sync.print_progress_link.assert_called_once()
 
     def test_tasks_rejects_queue_without_acceptance(self, project_dir, mock_router, agents_dir):
         # T11: a queue with empty acceptance must be rejected before

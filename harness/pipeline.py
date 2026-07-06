@@ -16,7 +16,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from harness.adapters.base import AdapterBase, AgentResult
 from harness.artifacts import (
@@ -37,8 +37,44 @@ from harness.inner_loop import EscalationError, InnerLoopError, LoopConfig, run_
 from harness.router import ModelRouter
 from harness.score_card import extract_json_from_fenced
 
+if TYPE_CHECKING:
+    from harness.linear_sync import LinearSync
+
 MAX_FEEDBACK_ITERATIONS = 5
 PHASE_TIMEOUT_SECONDS = 600
+
+
+def _summarize_cards_for_linear(cards: list) -> str:
+    """Render score cards as a multi-line summary for the Linear comment.
+
+    Format:
+        iter=N: correctness=0.90 test=0.85 boundary=0.80
+    plus a separate "blockers:" line if any card has blockers.
+    """
+    if not cards:
+        return "(no score cards)"
+    # Group by iteration so a multi-iter task shows the final state.
+    last_iter = max(c.iter for c in cards)
+    latest = [c for c in cards if c.iter == last_iter]
+    lines = [f"iter={last_iter}"]
+    parts: list[str] = []
+    for c in sorted(latest, key=lambda c: c.reviewer):
+        parts.append(f"{c.reviewer}={c.score:.2f}")
+    lines.append("  " + " ".join(parts))
+    blockers = [b for c in latest for b in c.blockers]
+    if blockers:
+        lines.append("blockers:")
+        lines.extend(f"  - {b}" for b in blockers)
+    return "\n".join(lines)
+
+
+def _extract_blockers_from_cards(cards: list) -> list[str]:
+    """Collect every blocker from every card into a flat list."""
+    out: list[str] = []
+    for c in cards:
+        for b in c.blockers:
+            out.append(f"[{c.reviewer}] {b}")
+    return out
 
 # Execution order of the outer pipeline (subset of Phase enum)
 PIPELINE_PHASES: list[Phase] = [
@@ -273,6 +309,7 @@ class Pipeline:
         router: Optional[ModelRouter] = None,
         agents_dir: Optional[Path] = None,
         skills_bundle_dir: Optional[Path] = None,
+        linear_sync: Optional["LinearSync"] = None,
     ) -> None:
         self._config = config
         self._adapter = adapter
@@ -280,6 +317,18 @@ class Pipeline:
         repo_root = Path(__file__).parent.parent
         self._agents_dir = agents_dir or repo_root / "agents"
         self._skills_bundle_dir = skills_bundle_dir or repo_root / "skills-bundle"
+        # Linear sync: defaults to a LocalLinearClient (in-memory, no
+        # network) when not provided. The pipeline never blocks on a
+        # missing Linear backend.
+        if linear_sync is None:
+            from harness.linear_sync import LinearSync, get_linear_client
+
+            self._linear_sync = LinearSync(
+                client=get_linear_client(),
+                project_dir=config.project_dir,
+            )
+        else:
+            self._linear_sync = linear_sync
         self._log = config.log
 
     # ------------------------------------------------------------------
@@ -668,6 +717,19 @@ class Pipeline:
 
         path = write_task_queue(self._config.project_dir, queue)
         self._log(f"Task queue saved: {path} ({len(queue.tasks)} tasks)")
+
+        # Mirror tasks to Linear (or local fallback). Failures here
+        # must NOT block the pipeline — Linear is a best-effort
+        # progress surface, not a source of truth.
+        try:
+            brief = read_artifact(self._config.project_dir, "000-brief") or ""
+            self._linear_sync.sync_tasks_phase(
+                brief=brief,
+                tasks=[t.model_dump(mode="json") for t in queue.tasks],
+            )
+            self._linear_sync.print_progress_link()
+        except Exception as e:  # defensive
+            self._log(f"[Linear] sync_tasks_phase failed: {e}")
         return path
 
     def phase_develop(self) -> None:
@@ -695,8 +757,10 @@ class Pipeline:
                 break
 
             self._log(f"▶ Task {task.id}: {task.title}")
+            # Mirror the start to Linear (no-op for unknown keys).
+            self._linear_sync.mark_in_progress(task.id)
             try:
-                run_inner_loop(
+                cards = run_inner_loop(
                     project_dir=project_dir,
                     task_id=task.id,
                     spec_text=full_spec,
@@ -706,12 +770,30 @@ class Pipeline:
                     config=loop_config,
                 )
                 self._log(f"✅ Task {task.id} passed gate and merged")
+                # Gate pass → DONE with score card summary in the comment.
+                try:
+                    summary = _summarize_cards_for_linear(cards)
+                    self._linear_sync.mark_done(task.id, summary)
+                except Exception as e:
+                    self._log(f"[Linear] mark_done failed: {e}")
             except EscalationError as exc:
                 self._log(f"🛑 Task {task.id} escalated after {exc.iter_count} iterations")
                 self._mark_task_blocked(task.id)
+                # Escalation → BLOCKED with the blockers in the comment.
+                try:
+                    blockers = _extract_blockers_from_cards(exc.cards)
+                    self._linear_sync.mark_blocked(task.id, blockers)
+                except Exception as e:
+                    self._log(f"[Linear] mark_blocked failed: {e}")
             except InnerLoopError as exc:
                 self._log(f"🛑 Task {task.id} failed: {exc}")
                 self._mark_task_blocked(task.id)
+                try:
+                    self._linear_sync.mark_blocked(
+                        task.id, [f"inner loop error: {exc}"]
+                    )
+                except Exception as e:
+                    self._log(f"[Linear] mark_blocked failed: {e}")
 
         queue = read_task_queue(project_dir)
         blocked = [t.id for t in (queue.tasks if queue else []) if t.status == TaskStatus.BLOCKED]
