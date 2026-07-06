@@ -1,0 +1,13 @@
+# gitleaks allowlist for the autodev-harness repo.
+#
+# Format: one rule per line. Each line is matched against the
+# "fingerprint" or rule-id reported by gitleaks.
+#
+# Use this ONLY for known false-positives such as documentation
+# placeholders. NEVER add a real secret here.
+
+# README.md / docs/CASE-STUDY.md use the literal strings below as
+# setup examples. They are placeholders, not credentials.
+README.md:generic-api-key:51
+README.md:generic-api-key:52
+docs/CASE-STUDY.md:generic-api-key:20
