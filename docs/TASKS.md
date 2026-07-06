@@ -164,9 +164,187 @@ miniprogram→macOS 上 miniprogram-automator 的接入脚本 + 业务逻辑纯�
 
 ---
 
-## 给执行模型的最后叮嘱
+## M4 韧性：额度耗尽自动续跑（quota-aware auto-resume）
 
-1. 不要合并任务、不要跳序、不要"顺手重构"清单外的东西。
-2. 每个任务开工前把它拆成 TodoWrite 步骤，完成后跑验收再 commit。
-3. 三次尝试解决不了同一个报错 → 停，把上下文写进 issue 问人，不要换路绕过验收。
-4. Fable/Opus 档的调用只允许出现在 router 配置指定的位置；开发调试期一律用 worker 档模型自测。
+> 动机：套餐额度用完时 pipeline 直接 `AdapterError` 挂掉，需要人工蹲点、掐表手动重跑。
+> 目标：识别"额度耗尽"错误 → 就地降级到便宜档接棒；无可用降级则 **零 token** 挂起，
+> 按各家的额度恢复策略在恢复时刻由 OS 级定时器无人值守拉起 `--continue`，续跑那半截卡住的任务。
+> 关键约束：**挂起等待期间不能有任何 LLM 调用**（触发时可能已经没 token 了），
+> 触发器必须是 OS 级机制（launchd / systemd-timer / at / sleeper 进程），不是 agent。
+
+### T16a  额度耗尽错误分类  ⏳
+**内容**：新增 `harness/quota.py` + `config/quota.yaml`（数据驱动的正则匹配表，按 provider 分组）。
+在 `adapters/base.py` 增加 `QuotaExhaustedError(AdapterError)`，携带 `tier / provider / reset_hint`。
+adapter `_execute` 里把"额度/余额耗尽"从普通 429 瞬时限流中区分出来（Anthropic：`usage limit`、
+`rate_limit_error ... resets at`；MiniMax：`insufficient balance`、`额度`；HTTP 402/403 带额度语义）。
+瞬时 429 仍走原指数退避；额度耗尽**不退避**，直接抛 `QuotaExhaustedError`。
+**验收**：给定各 provider 的真实错误串样本，分类函数正确区分 瞬时限流 / 额度耗尽 / 硬失败；
+误配的错误串不会被当成额度耗尽。**坑点**：错误串会变，全部放 config，代码只读表。
+
+### T16b  恢复时刻计算（两种策略，纯函数）  ⏳
+**内容**：`quota.py` 里 `next_reset(strategy, now, hint) -> datetime`。两种策略：
+`fixed_clock`（MiniMax：锚点 `00:00` + 每 `interval_hours=5` 一个边界，取 ≥ now 的下一个边界）；
+`rolling`（Anthropic：`now + window_hours=5`，用完才开始算）。`honor_reset_hint=true` 时，
+若错误里解析到了确切恢复时间（`retry-after` 秒 / `resets at <time>` / `anthropic-ratelimit-*`）则优先采用。
+`now` 从外部注入（禁用裸 `Date.now()` 式不可测写法），便于单测。
+**验收**：fixed_clock 跨午夜/边界、rolling、hint 覆盖 三类用例齐全且纯函数无副作用。
+
+### T16c  降级接棒（先用起来未被接线的 fallback）  ⏳
+**内容**：把 `models.yaml` 里已存在但从未被使用的 `fallback` 接上线。inner_loop / pipeline 捕获
+`QuotaExhaustedError` 时：若该 tier 有 fallback 且 fallback 未被标记耗尽 → 换 ModelSpec 到 fallback
+**立即就地续跑**（即"便宜模型接棒"）；把"tier X 已耗尽"记进运行期状态，避免同一轮反复撞墙。
+**验收**：worker 档耗尽后，同一任务自动切到 `claude-haiku-4-5` 继续并跑完；两档都耗尽时进入 T16d 挂起。
+
+### T16d  零 token 挂起 + OS 级定时续跑  ⏳
+**内容**：无可用 fallback（或全档耗尽）时：①确保在跑的 task/phase 状态落盘（复用 WorkflowState +
+task status，别丢半截）；②`resume_at = next_reset(...)`；③写 `.runner/quota-hold.json`
+（tier/provider/exhausted_at/resume_at/strategy/job_id/project_dir/phase/task_id）；
+④注册**OS 级**一次性触发器跑 `python -m harness --continue <project_dir>`：
+macOS 用 launchd LaunchAgent（本机 `atrun` 未加载，`at` 不可靠 → 首选 launchd）；
+Linux 用 `systemd --user` timer，缺失则退 `at`/cron；都没有则退 detached `nohup` sleeper（sleep 到点再 exec，
+仍是零 token）。⑤干净退出并打印 hold 信息。同一 project 只保留一个 pending job（幂等，重排替换）。
+**验收**：mock 调度器验证命令构造正确；起一个真实 launchd 一次性 job，到点无人值守拉起 `--continue`
+并从正确的 task 续上；挂起期间无任何模型调用（用调用计数断言）。
+**坑点**：launchd plist 的 `StartCalendarInterval` 只能到"时分"，跨天要算好日期；job 命名带 project hash 防冲突。
+
+### T16e  可观测性 + 护栏 + CLI  ⏳
+**内容**：`harness status` 展示 pending quota-hold 与倒计时；新增 `python -m harness quota-status` /
+`--cancel-hold`。护栏：最大自动续跑次数（额度长期不恢复时别无限循环）、"全档耗尽"要冒泡给人而不是空转。
+**验收**：status 正确显示/清除 hold；超过最大续跑次数后停手并留下清晰说明。
+
+---
+
+## M5 硬化：架构 review 发现（4 维并行审查汇总，2026-07-06）
+
+> 4 个子代理分审 并发/状态、adapter/错误语义、pipeline/耦合、测试/安全/配置。以下按严重度排序。
+> **⚠️ 关键：T17/T18/T19/T20/T22 是 M4（额度续跑）能真正跑通的前置**——续跑依赖状态完好、
+> 第三方模型链路可用、错误可分类。前置不修，M4 是建在沙上。
+
+### T17 ✅ [CRITICAL] 状态持久化原子化 + 损坏检测  ✅ 2026-07-06
+**内容**：`artifacts.py:404/501/357` 与 score_card 全用裸 `path.write_text()`，写一半崩溃即截断；
+`read_workflow_state:389` / `read_task_queue:477` 捕获 `JSONDecodeError` 后**返回 None**，损坏 state 被当"无 state"
+从头重跑。改为 写临时文件 + `os.replace()` 原子替换（同目录 rename）+ 可选 `fsync`；读到损坏时**报错**而非静默 None。
+**验收**：注入"写一半"故障后，旧 state 仍可读；损坏文件触发明确报错而非静默重跑。**坑点**：跨维护点都要走同一个原子写工具函数。
+
+### T18 [HIGH] resume 精确接续"半截的 task"  ⏳
+**内容**：三处让续跑无法接上：①`TaskStatus.IN_PROGRESS` 从不写盘（只更 Linear），崩溃时任务仍 pending，
+但 worktree `task/{id}` 已存在 → `create_worktree` 因分支已存在失败 → 任务被误打成 blocked；
+②`write_task_queue:488-497` 序列化**漏了 `platform` 字段**，重写后 mobile/miniprogram 任务回落 web、丢专属 reviewer；
+③`merge_worktree`(inner_loop:920) 先于 `complete_task`(929) 落盘，两步间崩溃 → 代码已并入但任务仍 pending，重跑重复劳动。
+改：进 `run_inner_loop` 前把任务写 `in_progress` 落盘；`create_worktree` 对已存在分支/worktree 幂等复用或清理；
+merge+complete 构成单一可恢复事务；序列化补全 platform（并审计其他漏字段）。
+**验收**：在任务执行中途 kill，`--continue` 能从该任务正确接续、不重复合并、跨端 reviewer 不丢。
+
+### T19 [HIGH] 打通第三方/降级模型链路（base_url + fallback + per-tier key）  ⏳
+**内容**：`ModelSpec.base_url` 从 router 解析出来后被**完全丢弃**——`run()/_execute` 无 `base_url` 形参，
+`ClaudeAdapter._execute` 的 `Popen` 没传 `env=`，MiniMax worker 档永远打到默认 Anthropic 端点（**"便宜模型接棒"目前跑不通**）。
+`fallback` 字段也只在 `pretty_print` 被读、无任何降级调用路径；`score_card.py:5` docstring 还谎称"switches to fallback"。
+改：`run()/_execute` 加 `base_url` 形参，`_execute` 构造 `env={**os.environ, "ANTHROPIC_BASE_URL": base_url, ...}` 传给 `Popen(env=)`，
+按 tier 注入对应 API key（避免多后端串号）；主模型失败时用 `spec.fallback` 重试；修正 score_card docstring。
+**验收**：worker 档实际打到 MiniMax 端点；主档不可用时自动切 fallback 跑通。**注**：这是 T16c 的前置，T16c 在其上做额度专属降级策略。
+
+### T20 [HIGH] 错误分类结构化（429/5xx/quota 不再靠子串）  ⏳
+**内容**：`claude.py:179/191` 靠 `"429" in stderr` / `"502" in stderr` 裸子串匹配——路径/token 数/行号里出现数字即误判；
+5xx 被统一装进 `RateLimitError`（语义是 429）表意混乱；真 429 若写进 stdout JSON 则漏检。
+`base.run()` 的 `except Exception` 又把连接重置等**可重试**瞬时错误一律不重试。
+改：优先解析 `--output-format json` 的结构化 error/HTTP status，子串退化为兜底并加词界（`\b429\b` + 关键短语）；
+5xx 单列 `ServerError(AdapterError)`；把 `ConnectionError/BrokenPipeError` 纳入可重试。
+**验收**：给定含"429"噪声的正常输出不误判；5xx 与 429 分流；瞬时连接错误会重试。**注**：T16a 的额度分类建在此清理后的错误分类法之上。
+
+### T21 [HIGH] 预算熔断：接线或拆除（需拍板）  ⏳
+**内容**：`router.check_budget()` 通篇 no-op、`BudgetExceeded` 从不抛出、`spent_by_tier` 无消费者，
+`models.yaml` 也没有每档 token 上限——"撞顶暂停"这条到处被引用的安全阀是**假承诺**（无人值守跑批 token 无上限）。
+连带：visual reviewer 记账返回空 `Usage()`(inner_loop:536) 使 UI 任务 budget 系统性低估；`_instance` 单例是死代码/误导；
+`router.py:289` 的 `Usage` 与 `base.py:23` 重复定义需手工同步。
+**二选一（请拍板）**：(A) 给 models.yaml 每档加 `max_tokens`，`check_budget` 真正比较并抛异常、每 stage 前调用、补全 visual usage；
+(B) 整套 budget 门面连同 `_instance` 一起删除，避免"假安全"。
+**验收**：A→撞顶真的暂停并可续；B→死代码清零、文档不再声称有预算保护。
+
+### T22 [HIGH] Python 主路径引入结构化日志  ⏳
+**内容**：`harness/` 全目录零 `import logging`、仅 18 处裸 `print()`；`logs/harness.log` 只被 legacy bash 写。
+真正在跑的 Python pipeline 不落任何持久日志，无人值守失败时无排障轨迹。引入 `logging`，统一写 `logs/harness.log`，
+关键节点记 stage/task_id/iter/usage/耗时。**验收**：一次失败跑批后，日志能定位到 stage+task+iter。**注**：M4 无人值守续跑尤其依赖它排障。
+
+### T23 [HIGH] 消除 os.environ 原地变异（违反不可变硬规则）  ⏳
+**内容**：`pipeline.py:429/681/684` 用 `os.environ[env_var]=""` 表达"这条反馈已消费"——突变进程级全局、非线程安全、
+污染单测、违反 CLAUDE.md 不可变规则。改：把"已消费"状态放进 Pipeline 实例字段（如 `self._consumed_feedback: set`），env 只读。
+**验收**：多次运行/并发不互相污染；env 不被写。
+
+### T24 [MEDIUM] 拆分超限文件 + run_inner_loop 巨函数  ⏳
+**内容**：`inner_loop.py`=951 行、`pipeline.py`=876 行，均超规范 800 上限；`run_inner_loop`(764-951) 单函数 ~188 行把
+queue/worktree/generator/diff/截图/并行评审/记账/gate/merge/升级全混在一起，几无法单测（`finally` 还是空 `pass`）。
+拆：inner_loop → `worktree.py` / `generator.py` / `reviewer_runner.py`；pipeline → `ui_phase.py`；
+主循环只做编排，抽 `_run_iteration/_setup_task/_on_gate_pass`。**验收**：各文件 <800 行、函数 <50 行、可对单轮迭代做单测。
+
+### T25 [MEDIUM] adapter DRY + 多模态走统一重试 + JSON 解析优化  ⏳
+**内容**：`run_with_attachments`(claude.py:31-117) 与 `_execute`(135-218) 大段重复且已漂移（多模态**漏了 5xx 重试**、
+且绕过 `run()` 的重试外壳零重试）；`_extract_json`(273-287) 逐字符 `json.loads` O(n²)、不支持数组；
+解析彻底失败时静默返回原文而不抛已定义的 `InvalidResponseError`；结果字段 `or` 链会吞合法假值；附件 argv 缺 `--` 终止符。
+改：抽 `_run_subprocess(cmd,...)` 公共私有方法、两路复用；`json.JSONDecoder().raw_decode` 一次 O(n)；解析失败抛 `InvalidResponseError`；
+附件前插 `--`。**验收**：多模态与文本路径共用同一重试/错误映射；大 JSON 解析不卡。
+
+### T26 [MEDIUM] 配置健壮性 + 消除耦合/魔数  ⏳
+**内容**：`models.yaml`/`slop_rules.yaml` 缺加载期 schema 校验（缺字段静默默认或裸 KeyError，对比 reviewers.yaml 已用 pydantic）；
+`PHASE_ARTIFACTS/STAGES/AGENTS` + runners 四张平行 Phase 表（改新 phase 要动四处）→ 合成 `@dataclass PhaseSpec` 单表；
+`inner_loop:896` 访问 `ReviewerAssembly._agents_dir` 私有属性→暴露公开 property；
+`ThreadPoolExecutor(max_workers=len(names))` 空列表会 `ValueError`→`max(1,len)` 且空 reviewer fail-fast；
+散落魔数（timeout 300/180、git 30/10、端口 8765、`fallback[:6]`）提为命名常量。
+**验收**：坏配置加载即报清晰错误；新增 phase 只改一处；空 reviewer 有明确诊断。
+
+### T27 [MEDIUM] 清理双实现债务 + env 文档统一  ⏳
+**内容**：`autodev-harness.sh:13` 在 `AUTODEV_USE_LEGACY=1` 时仍 `exec` 22KB legacy bash（source 全部 `lib/*.sh`），
+两套 pipeline 需同时维护、注释写"30 天后删"但仍接线；shell 读 `AUTODEV_MODEL/API_KEY/BASE_URL`，Python 读
+`AUTODEV_MODEL_<TIER>` 等，同概念不同名散落 5+ 文件、无集中清单；`opencode/codex` 是纯 stub，应在 `router.resolve`/启动校验
+fail-fast 而非等 `_execute` 才炸；`AgentResult.success`(`not stderr`) 语义错（仅冒烟测试用，属埋雷）。
+**内容决策**：定死 legacy 删除日期或立即下线。改：集中一份 env 变量文档并统一命名；success 只看 exit_code。
+**验收**：env 变量单一清单；legacy 去留有明确结论；未实现 adapter 启动即报错。
+
+---
+
+## 给执行模型的执行协议（EXECUTOR PROTOCOL — 开工前必读）
+
+> 你是**执行者**，不是设计者。唯一事实来源是本文件（`docs/TASKS.md`）。
+> 你的工作是把里面的任务一个一个落地，**不做任何设计决策、不改需求、不扩大范围**。
+
+### ① 铁律（违反任一条 → 立刻停手）
+
+1. **一次只做一个任务**，按依赖顺序来。禁止合并任务、禁止跳序、禁止"顺手重构"清单外的任何东西。
+2. **T21 已搁置——绝对不要碰**（不动 budget / `check_budget` / `_instance` / `BudgetExceeded`）。
+3. **依赖顺序**（先地基，后特性）：
+   `T17 → T20 → T19 → T18 → T22 → 然后才是 M4（T16a–e）→ 最后 T23–T27`。
+   被 `blockedBy` 的任务，前置没做完不许开工。**不许挑软柿子先做 T24–T27 的重构**。
+4. **强制 TDD**：先写会失败的测试（RED）→ 跑，确认真的失败 → 写最小实现（GREEN）→ 跑绿 → 重构。
+   没有先写测试，不许写实现。
+5. **不可变硬规则**：禁止原地修改对象、**禁止写 `os.environ`**（这正是 T23 要修的病，别再犯）。要改就返回新副本。
+6. 文件 **<800 行**、函数 **<50 行**、嵌套 **<4 层**。
+7. **全量测试必须保持绿**（当前基线约 318 passed），覆盖率 **≥80%**。你的改动不许让任何已有测试变红。
+8. 只用 **worker 档便宜模型**自测调试。**禁止调用 architect/Opus 档**——那些位置只允许出现在
+   `config/models.yaml` 路由指定处。
+9. 不删除、不覆盖你没创建的东西；不联网发布任何内容。
+
+### ② 每个任务的执行循环（照抄）
+
+1. 读该任务在本文件里的 内容 / 验收 / 坑点。
+2. 任务里引用的 `file:line` **可能已漂移**——动手前先 `grep` 核对真实位置，不要盲信行号。
+3. 把任务拆成待办步骤（TodoWrite）。
+4. 按 TDD 写测试 → 实现。
+5. 跑该任务的**验收标准** + 全量 `pytest`。全绿才算完。
+6. 一个任务 = 一个 commit，conventional 格式（`fix:` / `refactor:` / `feat:` …）；
+   **先开分支，不要 push（除非人类明确要求）**。
+7. 把本文件里该任务的 `⏳` 改成 `✅` + 日期。
+8. 回到第 1 步取下一个可做的任务。
+
+### ③ 卡住怎么办（最重要）
+
+- **同一个报错试 3 次还不过 → 立刻停**。把上下文（报错、你试了什么、卡在哪）写清楚问人，
+  **绝不允许绕过验收、改测试凑绿、或换条路硬塞过去**。
+- 任务描述和实际代码矛盾时 → 停下问人，不要自己猜着改。
+
+### ④ 完成判定 checklist（每个任务收工前逐条过）
+
+- [ ] 先写了测试且一开始是红的
+- [ ] 验收标准全部满足
+- [ ] 全量测试绿、覆盖率 ≥80%
+- [ ] 无 mutation、无 `os.environ` 写、无硬编码密钥
+- [ ] 文件 <800 行、函数 <50 行
+- [ ] 一任务一 commit，本文件对应任务已打勾
