@@ -76,7 +76,7 @@ develop 阶段逐 task 调 inner_loop。CLI：`python -m harness [--test|--itera
 
 ## M2 六大痛点的专项落地
 
-### T08 品味注入：skills-bundle + ui-design prompt 重写
+### T08 品味注入：skills-bundle + ui-design prompt 重写  ✅ 2026-07-06
 **内容**：把三件套（high-end-visual-design / frontend-design / design-taste-frontend）从
 `~/.claude/skills/` 拷进 `skills-bundle/`（自包含，注明来源和日期）。重写 `agents/ui-design.md`：
 固定拼入三件套精华 + 按 brief 关键词条件挂载风格模块（minimalist-ui/industrial-brutalist-ui/gpt-taste，也入 bundle）。

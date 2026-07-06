@@ -73,6 +73,79 @@ PHASE_AGENTS: dict[Phase, str] = {
     Phase.TASKS: "taskgen",
 }
 
+# Aesthetic directions the ui_design phase generates (T08 step 4).
+# Each direction specifies which style module to inject (or "(none)" for
+# the baseline-only direction) and a URL-friendly slug for the output dir.
+UI_DIRECTIONS: list[dict[str, str]] = [
+    {
+        "slug": "editorial-minimal",
+        "label": "Editorial minimal",
+        "module": "minimalist-ui",
+    },
+    {
+        "slug": "high-end-motion",
+        "label": "High-end motion",
+        "module": "gpt-taste",
+    },
+    {
+        "slug": "data-dense-industrial",
+        "label": "Data-dense industrial",
+        "module": "industrial-brutalist-ui",
+    },
+    {
+        "slug": "premium-default",
+        "label": "Premium default (baseline only)",
+        "module": "(none)",
+    },
+]
+
+# Brief-keyword → direction-slug picker. First match wins; if no keyword
+# matches, fall back to premium-default. The human can override via the
+# AUTODEV_UI_DIRECTION env var (a single slug) at any time.
+_DIRECTION_KEYWORDS: list[tuple[str, str]] = [
+    (r"dashboard|metric|chart|log|admin|observab|trading|inventory",
+     "data-dense-industrial"),
+    (r"landing|launch|portfolio|marketing|hero|homepage|brand",
+     "high-end-motion"),
+    (r"docs?|wiki|blog|linear[-\s]?like|notion[-\s]?like|note|writing",
+     "editorial-minimal"),
+]
+import re as _re_module  # local alias; re is stdlib so this is free
+_DIRECTION_KEYWORD_PATTERNS = [
+    (_re_module.compile(pattern, _re_module.IGNORECASE), slug)
+    for pattern, slug in _DIRECTION_KEYWORDS
+]
+
+
+def pick_directions_for_brief(plan_text: str) -> list[dict[str, str]]:
+    """Choose which set of 4 aesthetic directions to render this pass.
+
+    Always returns all four. The first slot is the *recommended* one
+    (based on brief keywords); the remaining three rotate in a fixed
+    order so the human can compare. An explicit
+    ``AUTODEV_UI_DIRECTION`` env var forces the recommended slot to a
+    specific slug instead.
+    """
+    explicit = os.environ.get("AUTODEV_UI_DIRECTION", "").strip()
+    recommended_slug = next(
+        (d["slug"] for d in UI_DIRECTIONS if d["slug"] == explicit),
+        None,
+    )
+    if recommended_slug is None:
+        for pattern, slug in _DIRECTION_KEYWORD_PATTERNS:
+            if pattern.search(plan_text):
+                recommended_slug = slug
+                break
+    if recommended_slug is None:
+        recommended_slug = "premium-default"
+
+    by_slug = {d["slug"]: d for d in UI_DIRECTIONS}
+    ordered: list[dict[str, str]] = [by_slug[recommended_slug]]
+    for d in UI_DIRECTIONS:
+        if d["slug"] != recommended_slug:
+            ordered.append(d)
+    return ordered
+
 
 class PipelineError(Exception):
     """Irrecoverable pipeline failure."""
@@ -103,9 +176,45 @@ def _read_agent_prompt(agents_dir: Path, agent_name: str) -> str:
     return path.read_text()
 
 
+def _read_bundle_skill(bundle_path: Path, *relative_parts: str) -> str:
+    """Load one skill from skills-bundle; raises PipelineError if missing."""
+    path = bundle_path.joinpath(*relative_parts, "SKILL.md")
+    if not path.exists():
+        raise PipelineError(f"Bundled skill missing: {path}")
+    return path.read_text()
+
+
 def _build_prompt(agent_prompt: str, input_text: str) -> str:
     """Append input context to an agent prompt, matching the bash convention."""
     return f"{agent_prompt}\n\n---INPUT---\n{input_text}\n"
+
+
+def _build_ui_prompt(
+    base_prompt: str,
+    plan_text: str,
+    direction: dict[str, str],
+    three_piece_text: str,
+    style_module_text: str,
+) -> str:
+    """Assemble a per-direction ui_design prompt.
+
+    The base prompt lives in agents/ui-design.md and tells the model how
+    to respond (markers, structure, rules). The directional context
+    (PLAN + DIRECTION + STYLE MODULE + 3-PIECE BASELINE) is appended in
+    the order ui-design.md expects in its 'Input' section.
+    """
+    module_block = (
+        "---STYLE MODULE PROMPT---\n(none — use only the three-piece baseline)"
+        if direction["module"] == "(none)"
+        else f"---STYLE MODULE PROMPT---\n{style_module_text}"
+    )
+    context = (
+        f"---PLAN---\n{plan_text}\n\n"
+        f"---AESTHETIC DIRECTION---\n{direction['slug']}\n\n"
+        f"{module_block}\n\n"
+        f"---THREE-PIECE BASELINE---\n{three_piece_text}\n"
+    )
+    return _build_prompt(base_prompt, context)
 
 
 def extract_ui_output(raw: str) -> tuple[str, str]:
@@ -116,7 +225,11 @@ def extract_ui_output(raw: str) -> tuple[str, str]:
     Returns ("", raw) when no HTML section can be identified — the caller
     decides whether that is acceptable.
     """
-    lines = raw.splitlines()
+    text = raw.strip()
+    if not text:
+        return "", ""
+
+    lines = text.splitlines()
 
     def _find(marker: str) -> Optional[int]:
         for i, line in enumerate(lines):
@@ -147,7 +260,7 @@ def extract_ui_output(raw: str) -> tuple[str, str]:
                 html = "\n".join(lines[fence_start + 1 : j]).strip()
                 return spec, html
 
-    return "", raw.strip()
+    return "", text
 
 
 class Pipeline:
@@ -159,18 +272,32 @@ class Pipeline:
         adapter: AdapterBase,
         router: Optional[ModelRouter] = None,
         agents_dir: Optional[Path] = None,
+        skills_bundle_dir: Optional[Path] = None,
     ) -> None:
         self._config = config
         self._adapter = adapter
         self._router = router or ModelRouter()
-        if agents_dir is None:
-            agents_dir = Path(__file__).parent.parent / "agents"
-        self._agents_dir = agents_dir
+        repo_root = Path(__file__).parent.parent
+        self._agents_dir = agents_dir or repo_root / "agents"
+        self._skills_bundle_dir = skills_bundle_dir or repo_root / "skills-bundle"
         self._log = config.log
 
     # ------------------------------------------------------------------
     # Phase primitives
     # ------------------------------------------------------------------
+
+    def _load_three_piece_baseline(self) -> str:
+        """Concatenate the three SKILL.md files that form the anti-slop baseline."""
+        parts = []
+        for name in ("design-taste-frontend", "high-end-visual-design", "frontend-design"):
+            parts.append(_read_bundle_skill(self._skills_bundle_dir, "3-piece", name))
+        return "\n\n---\n\n".join(parts)
+
+    def _load_style_module(self, module_name: str) -> str:
+        """Load one style module; empty string when the direction uses none."""
+        if module_name == "(none)":
+            return ""
+        return _read_bundle_skill(self._skills_bundle_dir, "styles", module_name)
 
     def _call_agent(self, phase: Phase, input_text: str) -> AgentResult:
         """Run the agent for a phase through the router-selected model."""
@@ -178,6 +305,43 @@ class Pipeline:
         spec = self._router.resolve(stage)
         agent_prompt = _read_agent_prompt(self._agents_dir, PHASE_AGENTS[phase])
         prompt = _build_prompt(agent_prompt, input_text)
+
+        result = self._adapter.run(
+            prompt,
+            model=spec.model,
+            cwd=self._config.project_dir,
+            timeout=PHASE_TIMEOUT_SECONDS,
+        )
+        self._router.record(stage, result.usage)
+        return result
+
+    def _call_ui_direction(
+        self,
+        direction: dict[str, str],
+        plan_text: str,
+        previous_spec: str = "",
+        user_feedback: str = "",
+    ) -> AgentResult:
+        """Run the ui_design agent for one specific aesthetic direction."""
+        stage = PHASE_STAGES[Phase.UI]
+        spec = self._router.resolve(stage)
+        agent_prompt = _read_agent_prompt(self._agents_dir, PHASE_AGENTS[Phase.UI])
+        three_piece = self._load_three_piece_baseline()
+        style_module = self._load_style_module(direction["module"])
+
+        context_extra = ""
+        if previous_spec:
+            context_extra += f"\n\n---PREVIOUS SPEC---\n{previous_spec}"
+        if user_feedback:
+            context_extra += f"\n\n---USER FEEDBACK---\n{user_feedback}"
+
+        prompt = _build_ui_prompt(
+            base_prompt=agent_prompt,
+            plan_text=plan_text + context_extra,
+            direction=direction,
+            three_piece_text=three_piece,
+            style_module_text=style_module,
+        )
 
         result = self._adapter.run(
             prompt,
@@ -263,38 +427,212 @@ class Pipeline:
         return get_artifact_path(self._config.project_dir, "002-plan")
 
     def phase_ui(self) -> Path:
-        self._log("━━━ Phase: ui_design ━━━")
-        plan = read_artifact(self._config.project_dir, "002-plan")
-        if plan is None:
+        self._log("━━━ Phase: ui_design (4 aesthetic directions) ━━━")
+        plan_text = read_artifact(self._config.project_dir, "002-plan")
+        if plan_text is None:
             raise PipelineError("002-plan.md not found — run plan first")
 
         preview_dir = self._config.project_dir / "preview"
-        preview_dir.mkdir(parents=True, exist_ok=True)
+        versions_dir = preview_dir / "versions"
+        versions_dir.mkdir(parents=True, exist_ok=True)
 
-        context = plan
+        ordered = pick_directions_for_brief(plan_text)
+        self._log(f"Directions (recommended first): {[d['slug'] for d in ordered]}")
+
+        # --- Iter 1: render all 4 directions ------------------------------
+        versions = self._render_all_directions(
+            ordered, plan_text, previous_spec="", user_feedback=""
+        )
+        # Automatic slop check on whatever the model shipped — surfaces
+        # blockers visually but does not block the pipeline; that is the
+        # visual reviewer's job (T09). We just print so the human sees it.
+        self._run_slop_check(versions)
+
+        # --- Human pick loop ---------------------------------------------
         for iteration in range(1, MAX_FEEDBACK_ITERATIONS + 1):
-            self._log(f"UI design iteration {iteration}")
-            result = self._call_agent(Phase.UI, context)
-            spec_md, html = extract_ui_output(result.stdout)
+            self._log("━ UI versions ━")
+            for idx, (direction, spec_md, html) in enumerate(versions, start=1):
+                path = versions_dir / direction["slug"] / "index.html"
+                self._log(f"  [{idx}] {direction['label']}  →  file://{path}")
 
-            html_path = preview_dir / "index.html"
-            html_path.write_text(html)
-            spec_path = write_artifact(
-                self._config.project_dir, "006-ui-spec", spec_md or result.stdout
+            choice, feedback = self._ask_version_choice(len(versions))
+            if choice == "accept_first":
+                winner = versions[0]
+                return self._finalize_version(winner, versions_dir)
+            if choice.isdigit():
+                idx = int(choice) - 1
+                if not (0 <= idx < len(versions)):
+                    feedback = choice  # treat as textual feedback
+                else:
+                    versions[idx] = self._refine_version(
+                        versions[idx],
+                        plan_text,
+                        previous_spec=versions[idx][1],
+                        user_feedback=feedback,
+                    )
+                    continue
+
+            # Free-form feedback → regenerate all 4 with the feedback appended
+            versions = self._render_all_directions(
+                ordered,
+                plan_text,
+                previous_spec=versions[0][1],
+                user_feedback=feedback,
             )
-            self._log(f"UI spec saved: {spec_path}")
-            self._log(f"Preview: file://{html_path}")
 
-            feedback = self._ask_feedback(
-                "修改意见（或直接回车接受当前设计）: ", "AUTODEV_UI_FEEDBACK"
-            )
-            if not feedback:
-                return spec_path
+        self._log(
+            f"Max feedback iterations ({MAX_FEEDBACK_ITERATIONS}) reached, "
+            "falling back to recommended direction"
+        )
+        return self._finalize_version(versions[0], versions_dir)
 
-            context = f"{plan}\n\n---PREVIOUS SPEC---\n{spec_md}\n\n---USER FEEDBACK---\n{feedback}"
+    def _render_all_directions(
+        self,
+        directions: list[dict[str, str]],
+        plan_text: str,
+        previous_spec: str,
+        user_feedback: str,
+    ) -> list[tuple[dict[str, str], str, str]]:
+        """Render every aesthetic direction in ``directions`` and persist them.
 
-        self._log(f"Max feedback iterations ({MAX_FEEDBACK_ITERATIONS}) reached, using current design")
-        return get_artifact_path(self._config.project_dir, "006-ui-spec")
+        Returns one tuple ``(direction, spec_md, html)`` per direction, in
+        the same order. Each direction's spec and html are written to
+        ``preview/versions/{slug}/`` regardless of whether the parse
+        succeeds — failures still produce a dir + placeholder so the
+        human sees "this direction failed" rather than "missing file".
+        """
+        rendered: list[tuple[dict[str, str], str, str]] = []
+        for direction in directions:
+            self._log(f"  rendering direction: {direction['slug']}")
+            try:
+                result = self._call_ui_direction(
+                    direction,
+                    plan_text,
+                    previous_spec=previous_spec,
+                    user_feedback=user_feedback,
+                )
+                spec_md, html = extract_ui_output(result.stdout)
+            except PipelineError as exc:
+                self._log(f"    direction {direction['slug']} failed: {exc}")
+                spec_md, html = "", ""
+
+            versions_dir = self._config.project_dir / "preview" / "versions"
+            dir_path = versions_dir / direction["slug"]
+            dir_path.mkdir(parents=True, exist_ok=True)
+            (dir_path / "index.html").write_text(html or "<!DOCTYPE html><!-- empty -->\n")
+            (dir_path / "spec.md").write_text(spec_md or "")
+            rendered.append((direction, spec_md, html))
+        return rendered
+
+    def _refine_version(
+        self,
+        version: tuple[dict[str, str], str, str],
+        plan_text: str,
+        previous_spec: str,
+        user_feedback: str,
+    ) -> tuple[dict[str, str], str, str]:
+        """Re-run one direction with feedback (no other directions affected)."""
+        direction = version[0]
+        result = self._call_ui_direction(
+            direction,
+            plan_text,
+            previous_spec=previous_spec,
+            user_feedback=user_feedback,
+        )
+        spec_md, html = extract_ui_output(result.stdout)
+        versions_dir = self._config.project_dir / "preview" / "versions"
+        dir_path = versions_dir / direction["slug"]
+        dir_path.mkdir(parents=True, exist_ok=True)
+        (dir_path / "index.html").write_text(html)
+        (dir_path / "spec.md").write_text(spec_md)
+        self._log(f"  regenerated: {direction['slug']}")
+        return (direction, spec_md, html)
+
+    def _finalize_version(
+        self,
+        winner: tuple[dict[str, str], str, str],
+        versions_dir: Path,
+    ) -> Path:
+        """Copy the chosen version's spec+html into the canonical artifacts."""
+        direction, spec_md, html = winner
+        canonical_html = self._config.project_dir / "preview" / "index.html"
+        canonical_html.parent.mkdir(parents=True, exist_ok=True)
+        canonical_html.write_text(html)
+        spec_path = write_artifact(
+            self._config.project_dir, "006-ui-spec", spec_md
+        )
+        self._log(f"Picked {direction['label']} → {spec_path}")
+        return spec_path
+
+    def _run_slop_check(self, versions):
+        """Print the slop check report for every rendered direction.
+
+        Non-blocking: warnings/blockers are logged so the human sees the
+        diagnostics, but we still let the pipeline proceed — T09
+        ``visual`` reviewer will block in the inner loop if needed.
+        """
+        from harness.slop_check import SlopValidator, load_rules
+
+        # config/ is at the repo root, not under the project dir
+        repo_root = Path(__file__).parent.parent
+        rules_path = repo_root / "config" / "slop_rules.yaml"
+        validator = (
+            SlopValidator(rules=load_rules(rules_path))
+            if rules_path.exists()
+            else SlopValidator()
+        )
+        versions_dir = self._config.project_dir / "preview" / "versions"
+        for direction, _spec, _html in versions:
+            self._log(f"  slop check: {direction['slug']}")
+            for artifact_name in ("index.html", "spec.md"):
+                artifact = versions_dir / direction["slug"] / artifact_name
+                if not artifact.exists():
+                    continue
+                result = validator.validate_file(artifact)
+                for line in result.render().splitlines():
+                    self._log(f"    {line}")
+                if not result.passed:
+                    self._log(
+                        f"    → {direction['slug']}/{artifact_name} has {len(result.blockers)} "
+                        "slop blocker(s); T09 visual reviewer will gate."
+                    )
+
+    def _ask_version_choice(self, num_versions: int) -> tuple[str, str]:
+        """Prompt the human for a version choice.
+
+        Returns ``(choice, feedback)``. ``choice`` is one of:
+          - ``"accept_first"`` — accept whichever is at position 1
+          - ``"1"`` / ``"2"`` / ... — pick that version (feedback ignored)
+          - any other string — treat as free-form feedback text
+        In non-TTY runs reads ``AUTODEV_UI_CHOICE`` (1-4) or
+        ``AUTODEV_UI_FEEDBACK`` (free-form text).
+        """
+        env_choice = os.environ.get("AUTODEV_UI_CHOICE", "").strip()
+        env_feedback = os.environ.get("AUTODEV_UI_FEEDBACK", "")
+
+        if not _is_interactive():
+            if env_choice:
+                os.environ["AUTODEV_UI_CHOICE"] = ""
+                return env_choice, ""
+            if env_feedback:
+                os.environ["AUTODEV_UI_FEEDBACK"] = ""
+                return "", env_feedback
+            # No env set — auto-accept the recommended slot
+            return "accept_first", ""
+
+        prompt = (
+            f"Choose 1-{num_versions}, type feedback to regenerate all, "
+            "or press Enter to accept #1: "
+        )
+        try:
+            raw = input(prompt).strip()
+        except EOFError:
+            return "accept_first", ""
+        if not raw:
+            return "accept_first", ""
+        if raw in {str(i) for i in range(1, num_versions + 1)}:
+            return raw, ""
+        return "", raw
 
     def phase_tasks(self) -> Path:
         self._log("━━━ Phase: tasks ━━━")
