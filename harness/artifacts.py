@@ -505,7 +505,10 @@ def write_task_queue(project_dir: Path, queue: TaskQueue) -> Path:
     """Write task queue to disk atomically (T17)."""
     ensure_dir(project_dir)
     path = get_artifact_path(project_dir, "003-task-queue")
-    # Serialize with TaskStatus as string values
+    # Serialize with TaskStatus as string values. T18 — ``platform`` was
+    # previously dropped here; mobile / miniprogram tasks therefore lost
+    # their dedicated reviewer on resume. Every Task field is now round-
+    # tripped explicitly so future field additions cannot silently drop.
     data = {
         "tasks": [
             {
@@ -516,6 +519,7 @@ def write_task_queue(project_dir: Path, queue: TaskQueue) -> Path:
                 "dependencies": t.dependencies,
                 "acceptance": t.acceptance,
                 "kind": t.kind,
+                "platform": t.platform,
                 "iteration_count": t.iteration_count,
             }
             for t in queue.tasks
@@ -543,3 +547,34 @@ def complete_task(queue: TaskQueue, task_id: str) -> TaskQueue:
         for task in queue.tasks
     ]
     return TaskQueue(tasks=new_tasks)
+
+
+def mark_task_in_progress(
+    project_dir: Path, task_id: str
+) -> Optional[Task]:
+    """Persist ``TaskStatus.IN_PROGRESS`` for ``task_id`` and return the new task.
+
+    T18 — without this write, a mid-task crash leaves the task PENDING on
+    disk while the worktree (and ``task/{id}`` branch) already exist;
+    resume then mis-classifies the task as fresh work and ``create_worktree``
+    fails because the branch is taken. Writing IN_PROGRESS before the
+    generator runs gives resume an unambiguous signal: pick up where we
+    left off, do not re-create the worktree.
+
+    Returns the updated Task, or ``None`` when the task id is not in the
+    queue (in which case the on-disk queue is left untouched).
+    """
+    queue = read_task_queue(project_dir)
+    if queue is None:
+        return None
+    target = next((t for t in queue.tasks if t.id == task_id), None)
+    if target is None:
+        return None
+    new_tasks = [
+        task.model_copy(update={"status": TaskStatus.IN_PROGRESS})
+        if task.id == task_id
+        else task
+        for task in queue.tasks
+    ]
+    write_task_queue(project_dir, TaskQueue(tasks=new_tasks))
+    return next(t for t in new_tasks if t.id == task_id)

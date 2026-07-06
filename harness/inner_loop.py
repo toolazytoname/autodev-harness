@@ -23,7 +23,15 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from harness.adapters.base import AdapterBase, AgentResult
-from harness.artifacts import Task, TaskQueue, TaskStatus, complete_task, read_task_queue, write_task_queue
+from harness.artifacts import (
+    Task,
+    TaskQueue,
+    TaskStatus,
+    complete_task,
+    mark_task_in_progress,
+    read_task_queue,
+    write_task_queue,
+)
 from harness.router import ModelRouter, ModelSpec
 from harness.score_card import (
     ScoreCard,
@@ -137,19 +145,48 @@ def create_worktree(
 
     Creates branch ``task/{task_id}`` from ``base_branch`` (or current HEAD).
     Returns the worktree directory path.
+
+    T18 — idempotent. If the worktree (and branch) already exist because
+    a previous run crashed mid-task, the existing worktree is reused
+    instead of failing with ``fatal: a branch named 'task/{id}' already
+    exists``. Resume can therefore safely call this multiple times for
+    the same task. When neither the worktree nor the branch exist we
+    create both; when the worktree exists but the branch was pruned
+    (rare) we re-attach.
     """
     branch_name = f"task/{task_id}"
     worktree_path = project_dir / ".worktrees" / branch_name
 
+    # Reuse path if the worktree directory is already there — the branch
+    # reference is what matters, not the directory mtime.
+    if worktree_path.exists():
+        return worktree_path
+
     ref = base_branch or get_current_branch(project_dir)
 
-    _run_git(
-        "worktree", "add",
-        "-b", branch_name,
-        str(worktree_path),
-        ref,
+    # If the branch exists but the worktree was pruned, attach without
+    # ``-b`` so we don't ask git to create a duplicate branch.
+    branch_proc = subprocess.run(
+        ["git", "rev-parse", "--verify", f"refs/heads/{branch_name}"],
         cwd=project_dir,
+        capture_output=True,
+        text=True,
     )
+    if branch_proc.returncode == 0:
+        _run_git(
+            "worktree", "add",
+            str(worktree_path),
+            branch_name,
+            cwd=project_dir,
+        )
+    else:
+        _run_git(
+            "worktree", "add",
+            "-b", branch_name,
+            str(worktree_path),
+            ref,
+            cwd=project_dir,
+        )
     return worktree_path
 
 
@@ -843,6 +880,13 @@ def run_inner_loop(
         platform = task.platform
     reviewer_names = assembly.get_reviewer_names(task_kind, platform=platform)
 
+    # T18 — mark the task IN_PROGRESS on disk before doing any work.
+    # Without this, a crash mid-task leaves the task PENDING while the
+    # ``task/{id}`` branch and worktree already exist; ``--continue``
+    # then mis-routes the task through the fresh-work path and
+    # ``create_worktree`` fails because the branch is taken.
+    mark_task_in_progress(project_dir, task_id)
+
     # ---------------------------------------------------------------------------
     # Create worktree for this task
     # ---------------------------------------------------------------------------
@@ -932,21 +976,30 @@ def run_inner_loop(
             passed, reason = check_gate(cards, pass_threshold=config.pass_threshold)
 
             if passed:
-                # Gate passed — merge and commit
-                try:
-                    merge_worktree(project_dir, task_id, base_branch=base_branch)
-                except InnerLoopError as exc:
-                    # Merge conflict — escalate
-                    write_escalation_report(
-                        project_dir, task_id, iter_num, all_cards, spec_text
-                    )
-                    raise EscalationError(task_id, iter_num, all_cards) from exc
-
-                # Mark task as completed in task queue
+                # Gate passed — T18 transaction order:
+                # 1. Write COMPLETED to disk FIRST so a crash mid-merge
+                #    leaves the task marked done and resume skips it
+                #    instead of re-running the iteration.
+                # 2. Then merge the worktree branch into the base branch.
+                #    A merge conflict surfaces as an escalation; we
+                #    intentionally do NOT roll the disk state back to
+                #    PENDING (the architect sees the discrepancy in the
+                #    escalation report and decides).
                 queue = read_task_queue(project_dir)
                 if queue:
                     queue = complete_task(queue, task_id)
                     write_task_queue(project_dir, queue)
+
+                try:
+                    merge_worktree(project_dir, task_id, base_branch=base_branch)
+                except InnerLoopError as exc:
+                    # Merge conflict — escalate with the diff between
+                    # on-disk state (COMPLETED) and actual repo state
+                    # (still on the task branch).
+                    write_escalation_report(
+                        project_dir, task_id, iter_num, all_cards, spec_text
+                    )
+                    raise EscalationError(task_id, iter_num, all_cards) from exc
 
                 return all_cards
 

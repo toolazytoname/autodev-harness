@@ -99,11 +99,14 @@ class TestWorktreeHelpers:
         )
         assert "task/task-42" in result.stdout
 
-    def test_create_worktree_idempotent_fails(self, mock_project):
-        # Creating the same worktree twice should raise
-        create_worktree(mock_project, "task-1")
-        with pytest.raises(InnerLoopError):
-            create_worktree(mock_project, "task-1")
+    def test_create_worktree_idempotent_returns_existing(self, mock_project):
+        # T18 — second call reuses the existing worktree instead of
+        # raising. Resume can safely call create_worktree for a task
+        # whose previous run crashed mid-iteration.
+        first = create_worktree(mock_project, "task-1")
+        second = create_worktree(mock_project, "task-1")
+        assert first == second
+        assert first.exists()
 
     def test_get_worktree_diff(self, mock_project):
         create_worktree(mock_project, "task-10")
