@@ -235,7 +235,7 @@ Linux 用 `systemd --user` timer，缺失则退 `at`/cron；都没有则退 deta
 merge+complete 构成单一可恢复事务；序列化补全 platform（并审计其他漏字段）。
 **验收**：在任务执行中途 kill，`--continue` 能从该任务正确接续、不重复合并、跨端 reviewer 不丢。
 
-### T19 [HIGH] 打通第三方/降级模型链路（base_url + fallback + per-tier key）  ⏳
+### T19 [HIGH] 打通第三方/降级模型链路（base_url + fallback + per-tier key）  ✅ 2026-07-07
 **内容**：`ModelSpec.base_url` 从 router 解析出来后被**完全丢弃**——`run()/_execute` 无 `base_url` 形参，
 `ClaudeAdapter._execute` 的 `Popen` 没传 `env=`，MiniMax worker 档永远打到默认 Anthropic 端点（**"便宜模型接棒"目前跑不通**）。
 `fallback` 字段也只在 `pretty_print` 被读、无任何降级调用路径；`score_card.py:5` docstring 还谎称"switches to fallback"。
