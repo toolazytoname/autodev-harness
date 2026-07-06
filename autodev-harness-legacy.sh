@@ -1,0 +1,707 @@
+#!/bin/bash
+# =============================================================================
+# AutoDevHarness - AI-Powered Development Framework
+# =============================================================================
+# Supports three modes:
+#   - new: New project development
+#   - iterate: Bug fixes / feature additions on existing projects
+#   - test: Quick validation (2-3 iterations, minimal viable)
+# =============================================================================
+
+set -e
+
+# === Configuration ===
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly LIB_DIR="$SCRIPT_DIR/lib"
+
+# === Load Default Config ===
+source "$SCRIPT_DIR/config/harness.config.sh"
+
+# Apply defaults (CLI args override config defaults)
+MAX_ITERATIONS="${MAX_ITERATIONS:-$DEFAULT_MAX_ITERATIONS}"
+PASS_THRESHOLD="${PASS_THRESHOLD:-$DEFAULT_PASS_THRESHOLD}"
+
+# === Load Libraries ===
+source "$LIB_DIR/ui.sh"
+source "$LIB_DIR/files.sh"
+source "$LIB_DIR/claude.sh"
+source "$LIB_DIR/state.sh"
+source "$SCRIPT_DIR/config/llm-config.sh"
+
+# Load LLM config (priority: CLI > env > config file > defaults)
+load_llm_config
+
+# === Usage ===
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS] [PROJECT_DIR] [-- PROJECT_DESCRIPTION]
+
+OPTIONS:
+    --new           New project mode (default)
+    --iterate       Iterate on existing project (bug fix / feature)
+    --test          Test mode (quick validation, 2-3 iterations)
+    -c, --continue  Continue from last checkpoint (自动推断阶段)
+    --phase PHASE   Jump to specific phase (research|plan|ui_design|tasks|develop)
+    --status        Show project status
+    --restart       Restart project (删除状态文件，重新开始)
+    --max-iterations N  Set max iterations (default: 15)
+
+PHASES (执行顺序):
+    research   → Research agent (竞争分析)
+    plan       → Plan agent (中文计划，支持用户反馈迭代)
+    ui_design  → UI design with Lazyweb references (HTML预览，支持迭代)
+    tasks      → Task generation
+    develop    → Generator → Evaluator loop
+
+LLM OPTIONS:
+    --llm-key KEY        LLM API key
+    --llm-url URL        LLM API URL
+    --model MODEL        Model name
+
+EXAMPLES:
+    # 新项目，从命令行描述开始
+    $(basename "$0") /path/to/project -- "我要开发一个宠物养成系统"
+
+    # 已有 000-brief.md，直接运行
+    cd /path/to/project
+    $(basename "$0")
+
+    # 从断点继续（自动检测当前阶段）
+    $(basename "$0") -c /path/to/project
+
+    # 跳转到指定阶段（跳过已完成阶段）
+    $(basename "$0") --phase plan /path/to/project
+    $(basename "$0") --phase ui_design /path/to/project
+
+    # 重启项目（删除状态文件）
+    $(basename "$0") --restart /path/to/project
+
+    # Test mode
+    $(basename "$0") --test /path/to/project -- "Quick validation task"
+EOF
+}
+
+# === Parse Arguments ===
+parse_args() {
+    local args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --new) MODE="new"; shift ;;
+            --iterate) MODE="iterate"; shift ;;
+            --test) MODE="test"; shift ;;
+            -c|--continue) ACTION="continue"; shift ;;
+            --status) ACTION="status"; shift ;;
+            --restart) ACTION="restart"; shift ;;
+            --phase) TARGET_PHASE="$2"; shift 2 ;;
+            --max-iterations) MAX_ITERATIONS="$2"; shift 2 ;;
+            --llm-key) LLM_API_KEY="$2"; shift 2 ;;
+            --llm-url) LLM_URL="$2"; shift 2 ;;
+            --model) LLM_MODEL="$2"; shift 2 ;;
+            -h|--help) usage; exit 0 ;;
+            --) shift; BRIEF_ARGS="$@"; break ;;
+            -*) error "Unknown option: $1" ;;
+            *) PROJECT_DIR="$1"; shift ;;
+        esac
+    done
+
+    # Apply CLI overrides
+    apply_cli_config "$@"
+
+    # Default to current directory
+    [[ -n "$PROJECT_DIR" ]] || PROJECT_DIR="$PWD"
+}
+
+# === Create Brief from CLI ===
+create_brief_from_args() {
+    local brief="$PROJECT_DIR/000-brief.md"
+    # Check if brief already exists
+    [[ -f "$brief" ]] && return 0
+
+    # If brief args exist, use them as brief content
+    [[ -z "$BRIEF_ARGS" ]] && return 0
+
+    log "Creating 000-brief.md from input..."
+    cat > "$brief" <<EOF
+# 项目需求
+
+$BRIEF_ARGS
+
+EOF
+    log "Brief created: $brief"
+}
+
+# === Mode Configuration ===
+configure_mode() {
+    CURRENT_PHASE="init"
+    case "$MODE" in
+        test)
+            MAX_ITERATIONS=3
+            PASS_THRESHOLD=5.0
+            SKIP_E2E=true
+            SKIP_SECURITY=true
+            log "🧪 TEST MODE: Quick validation (max $MAX_ITERATIONS iterations)"
+            ;;
+        iterate)
+            log "🔄 ITERATE MODE: Bug fix / feature addition"
+            ;;
+        new)
+            log "🆕 NEW MODE: Building from scratch"
+            ;;
+    esac
+    log "  Model: $LLM_MODEL"
+}
+
+# === Phase: Research ===
+phase_research() {
+    log_phase "research"
+    local brief="$PROJECT_DIR/000-brief.md"
+    local output="$PROJECT_DIR/001-research-report.md"
+
+    log_step "Reading brief from: $brief"
+    ensure_file "$brief"
+
+    log_step "Calling research agent..."
+    call_claude "researcher" "$brief" "$output"
+
+    log_step "Research report saved: $output"
+    save_state "plan"
+    log_done "Research complete"
+}
+
+# === Phase: Plan ===
+phase_plan() {
+    log_phase "plan"
+
+    # Collect infrastructure config first (Supabase URL, keys)
+    log_step "Collecting infrastructure configuration..."
+    collect_infra_config "$PROJECT_DIR"
+    load_infra_config "$PROJECT_DIR"
+
+    local research="$PROJECT_DIR/001-research-report.md"
+    local output="$PROJECT_DIR/002-plan.md"
+    local feedback_file="$PROJECT_DIR/.claude/plan-feedback.md"
+    local context_file="$PROJECT_DIR/.claude/plan-context.md"
+    local iteration=1
+
+    log_step "Reading research report: $research"
+    ensure_file "$research"
+
+    while true; do
+        log_step "━━━ Plan Iteration $iteration ━━━"
+
+        # Build context: research + previous plan + feedback (for iteration > 1)
+        cat > "$context_file" <<EOF
+# Planning Context
+
+---INPUT---
+EOF
+        cat "$research" >> "$context_file"
+
+        if [[ $iteration -gt 1 && -f "$output" ]]; then
+            cat >> "$context_file" <<EOF
+
+---PREVIOUS PLAN---
+$(cat "$output")
+EOF
+            if [[ -f "$feedback_file" ]]; then
+                cat >> "$context_file" <<EOF
+
+---USER FEEDBACK---
+$(cat "$feedback_file")
+EOF
+            fi
+        fi
+
+        log_step "Calling planner agent..."
+        call_claude "planner" "$context_file" "$output"
+
+        log_step "Plan saved: $output"
+
+        # Show plan preview and ask for feedback
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📋 PLAN PREVIEW (first 60 lines)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        head -60 "$output"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        read -p "修改意见（或直接回车接受当前计划）: " feedback
+
+        if [[ -z "$feedback" ]]; then
+            # User accepted
+            rm -f "$feedback_file"
+            break
+        fi
+
+        # Save feedback for next iteration
+        echo "$feedback" > "$feedback_file"
+        log_step "Feedback saved, will regenerate with your意见..."
+
+        ((iteration++))
+        if [[ $iteration -gt 5 ]]; then
+            warn "Max iterations (5) reached, using current plan"
+            rm -f "$feedback_file"
+            break
+        fi
+    done
+
+    save_state "ui_design"
+    log_done "Plan confirmed"
+}
+
+# === Phase: UI Design ===
+phase_ui_design() {
+    log_phase "ui_design"
+
+    local plan="$PROJECT_DIR/002-plan.md"
+    local spec_output="$PROJECT_DIR/006-ui-spec.md"
+    local html_output="$PROJECT_DIR/preview/index.html"
+    local feedback_file="$PROJECT_DIR/.claude/ui-design-feedback.md"
+
+    log_step "Reading plan: $plan"
+    ensure_file "$plan"
+
+    # Create preview directories
+    mkdir -p "$PROJECT_DIR/preview"
+    mkdir -p "$PROJECT_DIR/preview/versions"
+
+    # Search design references
+    log_step "Searching design references..."
+    local design_ref_file="$PROJECT_DIR/.claude/design-refs.md"
+    search_design_refs "$PROJECT_DIR" > "$design_ref_file" 2>&1 || true
+
+    # Split references by source
+    local lazyweb_ref="$PROJECT_DIR/.claude/ref-lazyweb.md"
+    local web_ref="$PROJECT_DIR/.claude/ref-web.md"
+    local ecc_ref="$PROJECT_DIR/.claude/ref-ecc.md"
+    local uiuxpro_ref="$PROJECT_DIR/.claude/ref-uiuxpro.md"
+
+    if [[ -s "$design_ref_file" ]]; then
+        log_step "Parsing references by source..."
+        # Extract Lazyweb section
+        awk '/--- Lazyweb/,/--- Web Design/' "$design_ref_file" | grep -v "^---" | grep -v "^$" > "$lazyweb_ref" 2>/dev/null || true
+        # Extract Web section
+        awk '/--- Web Design/,/--- ECC Frontend/' "$design_ref_file" | grep -v "^---" | grep -v "^$" > "$web_ref" 2>/dev/null || true
+        # Extract ECC section
+        awk '/--- ECC Frontend/,/--- UI.DEV Pro Max/' "$design_ref_file" | grep -v "^---" > "$ecc_ref" 2>/dev/null || true
+        # Extract UI/UX Pro Max section
+        awk '/--- UI.DEV Pro Max/,0' "$design_ref_file" | grep -v "^---" > "$uiuxpro_ref" 2>/dev/null || true
+    fi
+
+    local iteration=1
+    local chosen_version=""
+
+    while true; do
+        log_step "━━━ UI Design Iteration $iteration ━━━"
+
+        # Generate 4 versions from different reference sources
+        log_step "Generating 4 design versions..."
+
+        # Version 1: Lazyweb-inspired
+        log_step "  [1/4] Lazyweb-inspired..."
+        local ctx1="$PROJECT_DIR/.claude/ui-context-v1.txt"
+        build_ui_context "$plan" "$lazyweb_ref" "" "" > "$ctx1"
+        local out1="$PROJECT_DIR/preview/versions/v1-lazyweb.html"
+        local spec1="$PROJECT_DIR/preview/versions/v1-lazyweb-spec.md"
+        call_claude "ui-design" "$ctx1" > "$PROJECT_DIR/.claude/out-v1.tmp"
+        extract_html "$PROJECT_DIR/.claude/out-v1.tmp" "$spec1" "$out1"
+
+        # Version 2: Web-inspired
+        log_step "  [2/4] Web-inspired..."
+        local ctx2="$PROJECT_DIR/.claude/ui-context-v2.txt"
+        build_ui_context "$plan" "" "$web_ref" "" > "$ctx2"
+        local out2="$PROJECT_DIR/preview/versions/v2-web.html"
+        local spec2="$PROJECT_DIR/preview/versions/v2-web-spec.md"
+        call_claude "ui-design" "$ctx2" > "$PROJECT_DIR/.claude/out-v2.tmp"
+        extract_html "$PROJECT_DIR/.claude/out-v2.tmp" "$spec2" "$out2"
+
+        # Version 3: ECC Patterns-inspired
+        log_step "  [3/4] ECC Patterns-inspired..."
+        local ctx3="$PROJECT_DIR/.claude/ui-context-v3.txt"
+        build_ui_context "$plan" "" "" "$ecc_ref" > "$ctx3"
+        local out3="$PROJECT_DIR/preview/versions/v3-ecc.html"
+        local spec3="$PROJECT_DIR/preview/versions/v3-ecc-spec.md"
+        call_claude "ui-design" "$ctx3" > "$PROJECT_DIR/.claude/out-v3.tmp"
+        extract_html "$PROJECT_DIR/.claude/out-v3.tmp" "$spec3" "$out3"
+
+        # Version 4: UI/UX Pro Max-inspired
+        log_step "  [4/4] UI/UX Pro Max-inspired..."
+        local ctx4="$PROJECT_DIR/.claude/ui-context-v4.txt"
+        build_ui_context "$plan" "" "" "" "$uiuxpro_ref" > "$ctx4"
+        local out4="$PROJECT_DIR/preview/versions/v4-uiuxpro.html"
+        local spec4="$PROJECT_DIR/preview/versions/v4-uiuxpro-spec.md"
+        call_claude "ui-design" "$ctx4" > "$PROJECT_DIR/.claude/out-v4.tmp"
+        extract_html "$PROJECT_DIR/.claude/out-v4.tmp" "$spec4" "$out4"
+
+        # Show comparison
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📋 UI Design Versions Comparison"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "  [1] Lazyweb:         file://$out1"
+        echo "  [2] Web:            file://$out2"
+        echo "  [3] ECC:            file://$out3"
+        echo "  [4] UI/UX Pro Max:  file://$out4"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        read -p "选择版本 (1/2/3/4)，或输入意见重新生成，或回车保存版本1: " choice
+
+        if [[ -z "$choice" ]]; then
+            chosen_version="1"
+        elif [[ "$choice" =~ ^[1234]$ ]]; then
+            chosen_version="$choice"
+        else
+            echo "$choice" > "$feedback_file"
+            log_step "Feedback saved, regenerating..."
+            iteration=$((iteration + 1))
+            if [[ $iteration -gt 5 ]]; then
+                warn "Max iterations reached, using version 1"
+                chosen_version="1"
+            fi
+            continue
+        fi
+
+        # Copy chosen version to final output
+        case "$chosen_version" in
+            1)
+                cp "$out1" "$html_output"
+                cp "$spec1" "$spec_output"
+                log_step "Using Lazyweb-inspired version"
+                ;;
+            2)
+                cp "$out2" "$html_output"
+                cp "$spec2" "$spec_output"
+                log_step "Using Web-inspired version"
+                ;;
+            3)
+                cp "$out3" "$html_output"
+                cp "$spec3" "$spec_output"
+                log_step "Using ECC Patterns-inspired version"
+                ;;
+            4)
+                cp "$out4" "$html_output"
+                cp "$spec4" "$spec_output"
+                log_step "Using UI/UX Pro Max-inspired version"
+                ;;
+        esac
+
+        log_step "Final design saved: $html_output"
+        rm -f "$feedback_file"
+        break
+    done
+
+    save_state "tasks"
+}
+
+# === Build UI context for specific reference source ===
+build_ui_context() {
+    local plan="$1"
+    local lazyweb_ref="$2"
+    local web_ref="$3"
+    local ecc_ref="$4"
+    local uiuxpro_ref="$5"
+
+    {
+        echo "# UI Design Context"
+        echo ""
+        echo "Project: $PROJECT_DIR"
+        echo "Plan: $plan"
+        echo ""
+        echo "---PLAN---"
+        cat "$plan"
+    }
+
+    if [[ -s "$lazyweb_ref" ]]; then
+        echo ""
+        echo "---DESIGN REFS (Lazyweb)---"
+        cat "$lazyweb_ref"
+    fi
+
+    if [[ -s "$web_ref" ]]; then
+        echo ""
+        echo "---DESIGN REFS (Web)---"
+        cat "$web_ref"
+    fi
+
+    if [[ -s "$ecc_ref" ]]; then
+        echo ""
+        echo "---DESIGN REFS (ECC Patterns)---"
+        cat "$ecc_ref"
+    fi
+
+    if [[ -s "$uiuxpro_ref" ]]; then
+        echo ""
+        echo "---DESIGN REFS (UI/UX Pro Max)---"
+        cat "$uiuxpro_ref"
+    fi
+}
+
+# === Extract HTML from agent output ===
+extract_html() {
+    local temp_output="$1"
+    local spec_out="$2"
+    local html_out="$3"
+
+    # Try markers first (preferred format)
+    local spec_start=$(awk '/^---SPEC---$/{print NR; exit}' "$temp_output")
+    local html_start=$(awk '/^---HTML---$/{print NR; exit}' "$temp_output")
+    local html_end=$(awk '/^---END---$/{print NR; exit}' "$temp_output")
+
+    if [[ -n "$html_start" && -n "$html_end" ]]; then
+        if [[ -n "$spec_start" ]]; then
+            awk "NR>$spec_start && NR<$html_start" "$temp_output" > "$spec_out"
+        fi
+        awk "NR>$html_start && NR<$html_end" "$temp_output" > "$html_out"
+        return 0
+    fi
+
+    # Fallback: try markdown code fences (\`\`\`html ... \`\`\`)
+    local fence_start=$(awk '/^\`\`\`html$/{print NR; exit}' "$temp_output")
+    local fence_end=$(awk '/^\`\`\`$/{print NR; exit}' "$temp_output")
+
+    if [[ -n "$fence_start" && -n "$fence_end" && "$fence_end" -gt "$fence_start" ]]; then
+        if [[ -n "$spec_start" && "$spec_start" -lt "$fence_start" ]]; then
+            awk "NR>$spec_start && NR<$fence_start" "$temp_output" > "$spec_out"
+        fi
+        awk "NR>$fence_start && NR<$fence_end" "$temp_output" > "$html_out"
+        return 0
+    fi
+
+    # Fallback: if only html_start found (no END), grab everything after it
+    if [[ -n "$html_start" ]]; then
+        awk "NR>$html_start" "$temp_output" > "$html_out"
+        return 0
+    fi
+
+    # Last resort: copy as-is for spec, placeholder for html
+    cp "$temp_output" "$spec_out"
+    cat > "$html_out" <<'HTML'
+<!DOCTYPE html>
+<html>
+<head>
+  <title>UI Mockup Placeholder</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-8">
+  <div class="text-red-500">HTML not generated.</div>
+</body>
+</html>
+HTML
+}
+
+# === Phase: Tasks ===
+phase_tasks() {
+    log_phase "tasks"
+    local plan="$PROJECT_DIR/002-plan.md"
+    local output="$PROJECT_DIR/003-task-queue.json"
+
+    log_step "Reading plan: $plan"
+    ensure_file "$plan"
+
+    log_step "Calling taskgen agent..."
+    call_claude "taskgen" "$plan" "$output"
+
+    log_step "Tasks saved: $output"
+    save_state "develop"
+    log_done "Tasks generated"
+}
+
+# === Phase: Develop ===
+phase_develop() {
+    log_phase "develop"
+    load_state
+
+    local iteration=0
+    local score=0
+
+    log "Starting development loop (max $MAX_ITERATIONS iterations)"
+
+    while true; do
+        ((iteration++))
+
+        # Check max iterations
+        if [[ $iteration -gt $MAX_ITERATIONS ]]; then
+            warn "Max iterations ($MAX_ITERATIONS) reached"
+            break
+        fi
+
+        log ""
+        log "━━━ Iteration $iteration/$MAX_ITERATIONS ━━━"
+
+        # Get next pending task
+        local task=$(get_next_task)
+        if [[ -z "$task" ]]; then
+            log_done "All tasks completed!"
+            break
+        fi
+
+        log_step "Task: $task"
+
+        # Run generator for this task
+        log_step "Running generator..."
+        run_generator "$task" "$iteration"
+
+        # Run evaluator
+        log_step "Running evaluator..."
+        score=$(run_evaluator "$iteration")
+
+        # Check if passed
+        if is_score_passed "$score"; then
+            log "  Score: $score (passed threshold: $PASS_THRESHOLD)"
+            complete_task "$task"
+            save_iteration "$iteration" "$score"
+        else
+            log "  Score: $score (below threshold: $PASS_THRESHOLD)"
+            save_feedback "$iteration" "$score"
+        fi
+    done
+
+    log_done "Development complete"
+}
+
+# === Resume Workflow ===
+resume_workflow() {
+    local target_phase="${1:-}"
+    log_phase "resume"
+
+    if [[ -n "$target_phase" ]]; then
+        log "Jumping to phase: $target_phase"
+    else
+        load_state
+        target_phase="$CURRENT_PHASE"
+        log "Resuming from phase: $CURRENT_PHASE"
+    fi
+
+    case "$target_phase" in
+        research)
+            phase_research
+            phase_plan
+            phase_ui_design
+            phase_tasks
+            phase_develop
+            ;;
+        plan)
+            phase_plan
+            phase_ui_design
+            phase_tasks
+            phase_develop
+            ;;
+        ui_design)
+            phase_ui_design
+            phase_tasks
+            phase_develop
+            ;;
+        tasks)
+            phase_tasks
+            phase_develop
+            ;;
+        develop)
+            phase_develop
+            ;;
+        *)
+            error "Unknown phase: $target_phase"
+            ;;
+    esac
+}
+
+# === Show Status ===
+show_status() {
+    if ! load_state; then
+        log "No workflow state found"
+        exit 1
+    fi
+
+    cat <<EOF
+📊 Project Status: $PROJECT_DIR
+
+Current Phase: $CURRENT_PHASE
+Mode: $MODE
+Completed Phases: ${COMPLETED_PHASES[*]}
+Iterations: $ITERATION_COUNT
+
+Files:
+EOF
+
+    for key in "${!STATE_FILES[@]}"; do
+        echo "  - $key: ${STATE_FILES[$key]}"
+    done
+}
+
+# === Restart Project ===
+restart_project() {
+    log "⚠️ Restarting project..."
+    rm -f "$PROJECT_DIR/state/workflow-state.json"
+    log_done "Restarted. Run without --restart to begin fresh."
+}
+
+# === Main ===
+main() {
+    parse_args "$@"
+    configure_mode
+
+    # Initialize logging for this project
+    init_logging "$PROJECT_DIR"
+    log ""
+    log "═══════════════════════════════════════════════════════"
+    log " AutoDevHarness v1.0"
+    log " Mode: $MODE, Project: $PROJECT_DIR"
+    log "═══════════════════════════════════════════════════════"
+    log ""
+
+    # Handle non-execution commands
+    case "${ACTION:-}" in
+        status)
+            show_status
+            exit 0
+            ;;
+        restart)
+            restart_project
+            exit 0
+            ;;
+    esac
+
+    # Check/create project directory
+    ensure_project_dir
+
+    # Create brief from remaining args if provided
+    create_brief_from_args "$@"
+
+    # Handle --phase jump or --continue
+    if [[ -n "$TARGET_PHASE" ]]; then
+        log "🔍 Jumping to phase: $TARGET_PHASE"
+        resume_workflow "$TARGET_PHASE"
+    elif load_state; then
+        log "📂 Found existing workflow state"
+        if confirm "Continue from checkpoint?"; then
+            resume_workflow
+        else
+            log "Starting fresh..."
+            rm -f "$PROJECT_DIR/state/workflow-state.json"
+            phase_research
+            phase_plan
+            phase_ui_design
+            phase_tasks
+            phase_develop
+        fi
+    else
+        # Start fresh
+        log "🆕 Starting new workflow in: $PROJECT_DIR"
+        phase_research
+        phase_plan
+        phase_ui_design
+        phase_tasks
+        phase_develop
+    fi
+
+    log ""
+    log "═══════════════════════════════════════════════════════"
+    log " Workflow complete!"
+    log " Log saved: $LOG_FILE"
+    log "═══════════════════════════════════════════════════════"
+}
+
+# === Entry Point ===
+main "$@"
