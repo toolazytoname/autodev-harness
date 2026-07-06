@@ -30,6 +30,22 @@ from harness.adapters.base import (
     TransientError,
     Usage,
 )
+from harness.quota import (
+    QuotaExhaustedError,
+    QuotaSignal,
+    classify_quota_error,
+    load_quota_config,
+)
+
+
+# ---------------------------------------------------------------------------
+# Quota config (T16a)
+# ---------------------------------------------------------------------------
+
+# Loaded once at import time so the per-call classification is a
+# cheap regex sweep. Operators can edit config/quota.yaml to track
+# provider wording changes without touching code.
+_QUOTA_CONFIG = load_quota_config()
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +419,8 @@ class ClaudeAdapter(AdapterBase):
         Returns
         -------
         Optional[AdapterError]
+            - ``QuotaExhaustedError`` for usage-limit / balance signals
+              (T16a — NOT retried; T16c/T16d downgrade or suspend).
             - ``RateLimitError`` for 429 / rate-limit signals
             - ``ServerError`` for 5xx upstream signals
             - ``None`` if no retryable error is detected — caller should
@@ -415,12 +433,23 @@ class ClaudeAdapter(AdapterBase):
         2. **Word-boundary substring** fallback on stderr — robust against
            "429" or "500" appearing in paths, token counts, or line numbers
            (the bug the old bare ``"429" in stderr`` matcher had).
+
+        Quota check (T16a) runs first across stderr + structured error
+        text — quota signals are terminal even when they share
+        ``status_code == 429`` with transient rate-limit responses.
         """
         structured = self._extract_structured_error(stdout)
         if structured is not None:
             classified = self._classify_from_structured(structured)
             if classified is not None:
                 return classified
+
+        # T16a — quota check comes before generic 429 detection so a
+        # quota-exhausted 429 isn't mis-classified as a transient rate
+        # limit and burned through retry budget.
+        quota_signal = self._classify_quota(stderr, stdout)
+        if quota_signal is not None:
+            return self._quota_error(quota_signal, stderr)
 
         # Word-boundary substring fallback on stderr.
         if _RATE_LIMIT_RE.search(stderr):
@@ -433,6 +462,46 @@ class ClaudeAdapter(AdapterBase):
             )
 
         return None
+
+    def _classify_quota(
+        self,
+        stderr: str,
+        stdout: str,
+    ) -> Optional[QuotaSignal]:
+        """Run the T16a quota matchers across both stderr and stdout.
+
+        Some providers write the error text into the structured JSON
+        envelope (``stdout``) and a free-form description into ``stderr``;
+        checking both means we don't depend on which side it lands on.
+        """
+        for text in (stderr, stdout):
+            signal = classify_quota_error(
+                text,
+                provider="anthropic",
+                config=_QUOTA_CONFIG,
+            )
+            if signal is not None:
+                return signal
+        return None
+
+    def _quota_error(
+        self,
+        signal: QuotaSignal,
+        stderr: str,
+    ) -> QuotaExhaustedError:
+        """Build a QuotaExhaustedError from a matched signal.
+
+        ``tier`` is filled in by the outer pipeline (the adapter does
+        not know which tier triggered the call) — see
+        ``AdapterBase.run`` for the post-creation tier attachment.
+        """
+        return QuotaExhaustedError(
+            f"quota exhausted for provider '{signal.provider}': "
+            f"{stderr.strip()[:200]}",
+            provider=signal.provider,
+            reset_hint=signal.reset_hint,
+            retry_after_seconds=signal.retry_after_seconds,
+        )
 
     def _classify_from_structured(self, data: dict) -> Optional[AdapterError]:
         """Build a retryable error from a parsed JSON error envelope."""

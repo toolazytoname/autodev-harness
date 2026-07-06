@@ -125,6 +125,37 @@ class TimeoutError(AdapterError):
     pass
 
 
+class QuotaExhaustedError(AdapterError):
+    """Raised when the remote API reports a quota / usage-limit signal.
+
+    Distinct from :class:`RateLimitError`: a 429 Too Many Requests is
+    *transient* and the retry loop in :meth:`AdapterBase.run` will
+    back off and try again. A quota-exhausted error is *terminal* until
+    the provider resets the quota — retrying just wastes the budget.
+    T16c/T16d catch this exception to downgrade to a cheaper tier or
+    hand off to the OS-level scheduler.
+
+    The structured-data fields (``tier`` / ``provider`` / ``reset_hint``
+    / ``retry_after_seconds``) are filled in by the adapter and consumed
+    by the M4 auto-resume machinery.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tier: Optional[str] = None,
+        provider: Optional[str] = None,
+        reset_hint: Optional[str] = None,
+        retry_after_seconds: Optional[int] = None,
+    ) -> None:
+        super().__init__(message)
+        self.tier = tier
+        self.provider = provider
+        self.reset_hint = reset_hint
+        self.retry_after_seconds = retry_after_seconds
+
+
 class InvalidResponseError(AdapterError):
     """Raised when the agent returns unparseable or unexpected output."""
 
@@ -133,10 +164,19 @@ class InvalidResponseError(AdapterError):
 
 # Exceptions that ``AdapterBase.run()`` retries with exponential back-off.
 # TimeoutError is intentionally excluded — timeouts are not transient.
+# QuotaExhaustedError is intentionally excluded — retrying a quota
+# signal just wastes the budget; T16c/T16d downgrade or suspend instead.
 RETRYABLE_EXCEPTIONS: tuple[type[AdapterError], ...] = (
     RateLimitError,
     ServerError,
     TransientError,
+)
+
+# Known non-retryable errors that should propagate as-is, without being
+# wrapped in a generic "Unexpected adapter error" AdapterError.
+NON_RETRYABLE_EXCEPTIONS: tuple[type[AdapterError], ...] = (
+    TimeoutError,
+    QuotaExhaustedError,
 )
 
 
@@ -294,8 +334,8 @@ class AdapterBase(ABC):
                     break
                 time.sleep(delay)
 
-            except TimeoutError:
-                # Do not retry timeouts — they are not transient
+            except NON_RETRYABLE_EXCEPTIONS:
+                # Timeout / QuotaExhausted — propagate as-is, no retry.
                 raise
 
             except Exception as exc:

@@ -1,0 +1,51 @@
+# AutoDevHarness v2 — Quota Exhaustion Patterns
+# Per TASKS.md T16a
+#
+# When a provider returns a "quota exhausted" / "usage limit" / "insufficient
+# balance" signal, the harness must NOT back off and retry — retrying just
+# wastes the budget. Instead it surfaces a ``QuotaExhaustedError`` carrying
+# the reset hint, so T16c can downgrade and T16d can suspend with a
+# launchd / systemd-timer wake-up.
+#
+# Providers love to tweak their error strings, so the matching rules live
+# here in config rather than in Python. Patterns are evaluated as Python
+# regexes with ``re.IGNORECASE``.
+#
+# Reset-hint extraction: when the quota signal includes a recovery hint
+# (retry-after seconds, or "resets at <time>"), the matching capture group
+# is exposed as ``signal.reset_hint`` / ``signal.retry_after_seconds`` so
+# callers can compute a precise resume time without parsing the raw text.
+
+providers:
+  # Anthropic (Claude / claude.ai / console):
+  # - "usage limit" / "hit your specified usage limit"
+  # - "rate_limit_error ... resets at <iso>"
+  # - "insufficient credits" (newer plan-exhausted wording)
+  anthropic:
+    patterns:
+      - '\busage\s+limit\b'
+      - '\binsufficient\s+(?:balance|quota|credits)\b'
+      - 'rate_limit_error[^\n]*resets at'
+    reset_hint:
+      retry_after: 'retry[-_ ]after\s*[:=]?\s*(\d+)s?'
+      resets_at:   'resets at ([0-9TZ:\-\.]+)'
+
+  # MiniMax / MiniMax-M2.7 worker tier:
+  # - "insufficient balance"
+  # - "余额不足" (中文环境常见)
+  MiniMax:
+    patterns:
+      - 'insufficient\s+balance'
+      - '余额不足'
+    reset_hint:
+      retry_after: 'retry[-_ ]after\s*[:=]?\s*(\d+)s?'
+
+  # Catch-all: 402 / 403 with quota semantics. Most providers refuse
+  # to spell out "balance" plainly and just HTTP-403 the call when the
+  # account is drained; the JSON body usually contains one of the
+  # words below.
+  http_status:
+    patterns:
+      - '\b402\s+Payment\s+Required\b'
+      - '\b403[^\n]*(?:quota|balance|credits|billing)\b'
+    reset_hint: {}
