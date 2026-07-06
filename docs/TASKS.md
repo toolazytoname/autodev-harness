@@ -172,7 +172,7 @@ miniprogram→macOS 上 miniprogram-automator 的接入脚本 + 业务逻辑纯�
 > 关键约束：**挂起等待期间不能有任何 LLM 调用**（触发时可能已经没 token 了），
 > 触发器必须是 OS 级机制（launchd / systemd-timer / at / sleeper 进程），不是 agent。
 
-### T16a  额度耗尽错误分类  ⏳
+### T16a  额度耗尽错误分类  ✅ 2026-07-07
 **内容**：新增 `harness/quota.py` + `config/quota.yaml`（数据驱动的正则匹配表，按 provider 分组）。
 在 `adapters/base.py` 增加 `QuotaExhaustedError(AdapterError)`，携带 `tier / provider / reset_hint`。
 adapter `_execute` 里把"额度/余额耗尽"从普通 429 瞬时限流中区分出来（Anthropic：`usage limit`、
