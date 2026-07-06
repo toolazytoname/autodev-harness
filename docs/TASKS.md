@@ -115,24 +115,24 @@ opendesign 子集；`agents/researcher.md` 接入 `competitive-ads-extractor` �
 **验收**：对一个故意配色跑偏的页面，visual reviewer 给出 blocker；对合格页面放行。
 **坑点**：dev server 启动等待要健壮（探活轮询而非 sleep）；无头环境字体渲染差异不作为 blocker 依据。
 
-### T10 ⚡ researcher 重写：强制复用决策表
+### T10 ✅ researcher 重写：强制复用决策表  ✅ 2026-07-06
 **内容**：按 MASTER-PLAN P4 重写 `agents/researcher.md`：`gh search repos/code` + 包注册表 + deep-research skill，
 产出含"复用决策表"（候选|成熟度|覆盖%|fork/port/wrap/弃|理由）。pipeline 校验 001-research 里存在该表才放行进 plan。
 planner prompt 同步加一条：凡决策为 fork/wrap 的候选，plan 必须体现"在其上迭代"。
 **验收**：用"做一个 markdown 笔记 app"跑 research，决策表非空且含真实 repo（抽查 URL 有效）。
 
-### T11 ⚡ taskgen 升级：acceptance 字段 + E2E 场景
+### T11 ✅ taskgen 升级：acceptance 字段 + E2E 场景  ✅ 2026-07-06
 **内容**：task schema 加 `acceptance: []`（可执行验收标准，含用户流程步骤）和 `kind: ui|api|logic|infra`
 （决定 reviewer 组合）。taskgen prompt 要求每个 task 必须有可被 browser-use/测试命令执行的 acceptance。
 **验收**：schema 校验通过；test reviewer 能直接把 acceptance 转成执行步骤。
 
-### T12 Linear 同步
+### T12 ✅ Linear 同步  ✅ 2026-07-06
 **内容**：`linear_sync.py`：经 Linear MCP（优先 streamlinear，省 token）在 tasks 阶段建 project+issues（含依赖），
 inner_loop 状态机同步（In Progress/Done+score card 摘要评论/Blocked+blockers 评论）。
 无 `LINEAR_API_KEY` 时静默降级为本地模式（MASTER-PLAN P6）。进度链接在 pipeline 启动时打印。
 **验收**：mock MCP 的单测 + 真实 sandbox 验证一次状态流转；降级路径有测试。
 
-### T13 移动端/小程序测试适配（按 MASTER-PLAN P5 的分层）
+### T13 ✅ 移动端/小程序测试适配（按 MASTER-PLAN P5 的分层）  ✅ 2026-07-06
 **内容**：reviewers.yaml 加 `platform: web|miniprogram|mobile` 维度：
 web→browser-use；mobile→Maestro flow（生成 YAML flow 模板 + 本地模拟器说明文档）；
 miniprogram→macOS 上 miniprogram-automator 的接入脚本 + 业务逻辑纯函数化的 generator 约束
@@ -144,12 +144,12 @@ miniprogram→macOS 上 miniprogram-automator 的接入脚本 + 业务逻辑纯�
 
 ## M3 收尾
 
-### T14 文档 + 自身质量达标
+### T14 ✅ 文档 + 自身质量达标  ✅ 2026-07-06
 **内容**：重写 README（v2 架构、快速开始、路由表说明、Linear 接入、跨端测试矩阵）；
 `docs/ADAPTER.md` 写清 opencode/codex 接入约定。全包测试覆盖 ≥80%，macOS+Linux CI（GitHub Actions）。
 **验收**：MASTER-PLAN §6 全部 6 条勾完；CI 绿。
 
-### T15 用真实项目做一次端到端验证
+### T15 ✅ 用真实项目做一次端到端验证  ✅ 2026-07-06
 **内容**：选一个真实小项目（建议就用用户下一个想做的 idea），全流程走一遍，
 记录：总 token 消耗按 tier 分布、architect 占比、gate 拦截次数、人工介入次数。产出 `docs/CASE-STUDY.md`。
 **验收**：architect 档 token 占比 < 10%；人工介入 ≤ 3 次（brief/plan/UI/最终验收之外为 0）。
