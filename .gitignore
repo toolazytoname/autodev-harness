@@ -39,3 +39,17 @@ __pycache__/
 # Coverage
 .coverage
 uv.lock
+
+# Python virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# Local databases / data files
+*.sqlite
+*.sqlite3
+*.db
+
+# Local secrets directory
+secrets/
