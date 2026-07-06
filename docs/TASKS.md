@@ -108,7 +108,7 @@ SKILL.md。
 opendesign 子集；`agents/researcher.md` 接入 `competitive-ads-extractor` 与
 `ad-creative` 的提示词指引；全量测试仍 ≥ 158 passed。
 
-### T09 visual reviewer：截图对照评审
+### T09 visual reviewer：截图对照评审  ✅ 2026-07-06
 **内容**：给 inner_loop 的 UI 任务接 browser-use（或 Playwright）执行器：起 dev server →
 按 006-ui-spec 里的页面清单逐页截图 → 图 + spec 喂给 visual reviewer 打分（多模态），
 截图存 `score-cards/task-{id}/screenshots/` 作 evidence。
