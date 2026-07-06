@@ -85,6 +85,29 @@ develop 阶段逐 task 调 inner_loop。CLI：`python -m harness [--test|--itera
 **验收**：同一个 brief 生成 4 版 HTML，人工抽查无 Inter 字体/紫渐变/generic shadow 等 slop 特征
 （可写脚本 grep HTML 检查禁用项，作为自动验收）。
 
+### T08b 可选·opendesign 子集抽取（参考合约 + 营销创意 + 高级动效）— 建议放到下一个 checkpoint
+**内容**：从 `https://github.com/nexu-io/open-design`（skill + HTML 模板 monorepo，
+head 700+ skill，绝大多数与 taste-skill 重叠）抽 4 类有价值的新增内容，
+入 `skills-bundle/opendesign/`：
+
+- `reference-design-contract` —— "参考图转 DESIGN.md"，对 ui-design.md 的 D
+  节方向选择形成补充
+- `design-brief` —— I-Lang 协议化 brief 解析，可喂 plan 阶段做"无歧义 brief"
+- `emil-design-eng` / `emilkowalski-motion` / `impeccable-design-polish` —
+  高级动效/收尾做工素材
+- `competitive-ads-extractor` / `ad-creative` —— 营销与竞品素材，给 researcher
+  用
+
+**为什么不在 T08 一并落地**：T08 验收已经落在 4 美学方向 + 158 测试基线 + 自动
+slop 校验，再扩 bundle 会冲掉验收成果；opendesign 是 monorepo（含 figma 插件、
+apps、packages），需要单独写 import 脚本而不像 taste-skill 那样直接拷贝
+SKILL.md。
+
+**验收**：`skills-bundle/opendesign/` 落地 ≥ 4 个 SKILL.md，每条带 LICENSE
++ SOURCES.md 来源；`agents/ui-design.md` 的 STYLE MODULE 候选列表添加
+opendesign 子集；`agents/researcher.md` 接入 `competitive-ads-extractor` 与
+`ad-creative` 的提示词指引；全量测试仍 ≥ 158 passed。
+
 ### T09 visual reviewer：截图对照评审
 **内容**：给 inner_loop 的 UI 任务接 browser-use（或 Playwright）执行器：起 dev server →
 按 006-ui-spec 里的页面清单逐页截图 → 图 + spec 喂给 visual reviewer 打分（多模态），
