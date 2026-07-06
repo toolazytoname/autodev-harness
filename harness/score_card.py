@@ -16,6 +16,8 @@ from typing import Any, Optional
 
 import pydantic
 
+from harness.atomic_io import AtomicIOError, atomic_write_json, read_json_or_raise
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -158,11 +160,9 @@ def save_score_card(
     task_id: str,
     card: ScoreCard,
 ) -> Path:
-    """Write a score card to disk.
+    """Write a score card to disk atomically (T17).
 
     File path: ``score-cards/task-{id}/iter-{n}-{reviewer}.json``
-
-    Creates parent directories as needed.
     """
     dir_path = get_score_card_dir(project_dir, task_id)
     dir_path.mkdir(parents=True, exist_ok=True)
@@ -173,8 +173,7 @@ def save_score_card(
     raw = card.model_dump(mode="json")
     # version is already a string after model_dump(mode="json")
 
-    file_path.write_text(json.dumps(raw, indent=2) + "\n")
-    return file_path
+    return atomic_write_json(file_path, raw)
 
 
 def load_score_card(
@@ -183,14 +182,23 @@ def load_score_card(
     iter_num: int,
     reviewer: str,
 ) -> Optional[ScoreCard]:
-    """Load a single score card from disk."""
+    """Load a single score card from disk.
+
+    Returns None when the file does not exist. Raises AtomicIOError when
+    the file exists but cannot be parsed — see T17 [CRITICAL].
+    """
     file_path = get_score_card_dir(project_dir, task_id) / f"iter-{iter_num}-{reviewer}.json"
     if not file_path.exists():
         return None
+    raw = read_json_or_raise(file_path)
     try:
-        return parse_score_card(json.loads(file_path.read_text()))
-    except ScoreCardParseError:
-        return None
+        return parse_score_card(raw)
+    except ScoreCardParseError as exc:
+        raise AtomicIOError(
+            f"Score card at {file_path} has invalid schema: {exc}",
+            path=file_path,
+            cause=exc,
+        ) from exc
 
 
 def load_all_cards(
@@ -198,13 +206,18 @@ def load_all_cards(
     task_id: str,
     iter_num: Optional[int] = None,
 ) -> list[ScoreCard]:
-    """Load all score cards for a task, optionally filtered by iteration."""
+    """Load all score cards for a task, optionally filtered by iteration.
+
+    Raises AtomicIOError on the first card file that is corrupt or has an
+    invalid schema — see T17 [CRITICAL]. Silent skipping of bad cards
+    would let a mid-write crash hide evidence of the gate's verdict.
+    """
     dir_path = get_score_card_dir(project_dir, task_id)
     if not dir_path.exists():
         return []
 
     cards = []
-    for fp in dir_path.iterdir():
+    for fp in sorted(dir_path.iterdir()):
         if fp.suffix != ".json":
             continue
         # Parse iter-X-reviewer.json
@@ -218,11 +231,15 @@ def load_all_cards(
             continue
         if iter_num is not None and card_iter != iter_num:
             continue
+        raw = read_json_or_raise(fp)
         try:
-            card = parse_score_card(json.loads(fp.read_text()))
-            cards.append(card)
-        except ScoreCardParseError:
-            continue
+            cards.append(parse_score_card(raw))
+        except ScoreCardParseError as exc:
+            raise AtomicIOError(
+                f"Score card at {fp} has invalid schema: {exc}",
+                path=fp,
+                cause=exc,
+            ) from exc
     return cards
 
 

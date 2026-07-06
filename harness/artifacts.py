@@ -13,6 +13,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from harness.atomic_io import (
+    AtomicIOError,
+    atomic_write_json,
+    atomic_write_text,
+    read_json_or_raise,
+    read_text_or_raise,
+)
+
 import pydantic
 import yaml
 
@@ -353,9 +361,7 @@ def read_artifact(project_dir: Path, name: str) -> Optional[str]:
 def write_artifact(project_dir: Path, name: str, content: str) -> Path:
     """Write artifact content. Creates parent directories if needed."""
     path = get_artifact_path(project_dir, name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-    return path
+    return atomic_write_text(path, content)
 
 
 def artifact_exists(project_dir: Path, name: str) -> bool:
@@ -372,12 +378,18 @@ STATE_FILE = "workflow-state.json"
 
 
 def read_workflow_state(project_dir: Path) -> Optional[WorkflowState]:
-    """Read workflow state. Returns None if no state file exists."""
+    """Read workflow state. Returns None if no state file exists.
+
+    Raises AtomicIOError if the file exists but cannot be parsed — the
+    previous behaviour of silently returning None on corruption was the
+    root cause of "mid-write crash → full pipeline restart → all progress
+    lost" (see T17 [CRITICAL]).
+    """
     state_file = project_dir / STATE_FILE
     if not state_file.exists():
         return None
     try:
-        raw = json.loads(state_file.read_text())
+        raw = read_json_or_raise(state_file)
         # Handle Path serialization from bash (strings instead of Path objects)
         if "project_dir" in raw:
             raw["project_dir"] = Path(raw["project_dir"])
@@ -386,13 +398,16 @@ def read_workflow_state(project_dir: Path) -> Optional[WorkflowState]:
                 if v and isinstance(v, str):
                     raw["files"][k] = Path(v)
         return WorkflowState.model_validate(raw)
-    except (json.JSONDecodeError, pydantic.ValidationError) as e:
-        # Backward compat: if state file is malformed, return None
-        return None
+    except pydantic.ValidationError as exc:
+        raise AtomicIOError(
+            f"Workflow state at {state_file} has invalid schema: {exc}",
+            path=state_file,
+            cause=exc,
+        ) from exc
 
 
 def write_workflow_state(project_dir: Path, state: WorkflowState) -> Path:
-    """Write workflow state to disk."""
+    """Write workflow state to disk atomically (T17)."""
     ensure_dir(project_dir)
     state_file = project_dir / STATE_FILE
     # Serialize to JSON with Path objects as strings
@@ -401,8 +416,7 @@ def write_workflow_state(project_dir: Path, state: WorkflowState) -> Path:
     raw["project_dir"] = str(raw["project_dir"])
     files_raw = raw.get("files") or {}
     raw["files"] = {k: str(v) if v else None for k, v in files_raw.items()}
-    state_file.write_text(json.dumps(raw, indent=2) + "\n")
-    return state_file
+    return atomic_write_json(state_file, raw)
 
 
 def ensure_dir(path: Path) -> None:
@@ -467,19 +481,28 @@ def is_phase_complete(project_dir: Path, phase: Phase) -> bool:
 
 
 def read_task_queue(project_dir: Path) -> Optional[TaskQueue]:
-    """Read task queue from 003-task-queue.json."""
+    """Read task queue from 003-task-queue.json.
+
+    Returns None when the file does not exist (normal startup state).
+    Raises AtomicIOError when the file exists but is corrupt or has an
+    invalid schema — see T17 [CRITICAL] for why silent None was dangerous.
+    """
     path = get_artifact_path(project_dir, "003-task-queue")
     if not path.exists():
         return None
     try:
-        raw = json.loads(path.read_text())
+        raw = read_json_or_raise(path)
         return TaskQueue.from_json(raw)
-    except (json.JSONDecodeError, pydantic.ValidationError):
-        return None
+    except pydantic.ValidationError as exc:
+        raise AtomicIOError(
+            f"Task queue at {path} has invalid schema: {exc}",
+            path=path,
+            cause=exc,
+        ) from exc
 
 
 def write_task_queue(project_dir: Path, queue: TaskQueue) -> Path:
-    """Write task queue to disk."""
+    """Write task queue to disk atomically (T17)."""
     ensure_dir(project_dir)
     path = get_artifact_path(project_dir, "003-task-queue")
     # Serialize with TaskStatus as string values
@@ -498,8 +521,7 @@ def write_task_queue(project_dir: Path, queue: TaskQueue) -> Path:
             for t in queue.tasks
         ]
     }
-    path.write_text(json.dumps(data, indent=2) + "\n")
-    return path
+    return atomic_write_json(path, data)
 
 
 def get_next_task(queue: TaskQueue) -> Optional[Task]:
