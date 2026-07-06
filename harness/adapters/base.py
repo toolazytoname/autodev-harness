@@ -203,6 +203,42 @@ class AdapterBase(ABC):
         delay = self.RETRY_BASE_DELAY * (2**attempt)
         return min(delay, self.RETRY_MAX_DELAY)
 
+    def run_with_attachments(
+        self,
+        prompt: str,
+        attachments: list,
+        *,
+        model: str,
+        cwd: Path | str | None = None,
+        timeout: int = 120,
+    ) -> AgentResult:
+        """Run the agent with multimodal attachments (images / PDFs).
+
+        Subclasses that support attachments (currently ``ClaudeAdapter``)
+        must override this. The default implementation raises a clear
+        ``AdapterError`` so the visual reviewer fails immediately when
+        pointed at a non-Claude adapter instead of pretending to work.
+
+        Parameters
+        ----------
+        prompt
+            The text prompt.
+        attachments
+            Iterable of ``Path`` to image/PDF files. Order matters — the
+            first attachment is usually the hero/marketing page.
+        model
+            Model identifier.
+        cwd
+            Working directory (default: cwd).
+        timeout
+            Per-attempt timeout in seconds.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support multimodal attachments. "
+            "Use ClaudeAdapter, or extend the adapter to forward files to "
+            "the underlying CLI."
+        )
+
     @abstractmethod
     def _execute(
         self,

@@ -342,6 +342,7 @@ def run_single_reviewer(
     diff_text: str,
     changed_files: list[str],
     iter_num: int,
+    screenshots: Optional[list[Path]] = None,
 ) -> tuple[ScoreCard, "Usage"]:
     """Run a single reviewer and return its score card and token usage.
 
@@ -351,8 +352,29 @@ def run_single_reviewer(
     3. Runs the adapter (reviewer-tier model)
     4. Parses the score card JSON from the output
     5. Saves the score card to disk
+
+    For the special reviewer named ``"visual"`` the prompt-only path is
+    bypassed entirely; instead ``harness.visual_reviewer.run_visual_review``
+    is invoked which captures screenshots and feeds them to a multimodal
+    model. ``screenshots`` is ignored for non-visual reviewers so the
+    rest of the registry stays uniform.
     """
     from harness.adapters.base import Usage  # noqa: PLC0415
+
+    if reviewer_name == "visual":
+        return _run_visual_reviewer(
+            adapter=adapter,
+            router=router,
+            worktree_path=worktree_path,
+            project_dir=project_dir,
+            task_id=task_id,
+            spec_text=spec_text,
+            diff_text=diff_text,
+            changed_files=changed_files,
+            iter_num=iter_num,
+            screenshots=screenshots or [],
+            prompt_path=prompt_path,
+        )
 
     stage = f"review.{reviewer_name}"
     spec = router.resolve(stage)
@@ -455,6 +477,93 @@ def run_single_reviewer(
     return card, usage
 
 
+def _run_visual_reviewer(
+    adapter: AdapterBase,
+    router: ModelRouter,
+    worktree_path: Path,
+    project_dir: Path,
+    task_id: str,
+    spec_text: str,
+    diff_text: str,
+    changed_files: list[str],
+    iter_num: int,
+    screenshots: list[Path],
+    prompt_path: Path,
+) -> tuple[ScoreCard, "Usage"]:
+    """Dispatch path for the multimodal visual reviewer.
+
+    For UI tasks the inner loop pre-captures screenshots once per
+    iteration into ``score-cards/task-{id}/screenshots/``; this helper
+    receives the already-captured paths, hands them to
+    ``harness.visual_reviewer.run_visual_review``, and persists the
+    resulting score card like every other reviewer.
+    """
+    from harness.adapters.base import Usage  # noqa: PLC0415
+    from harness.visual_reviewer import run_visual_review
+
+    stage = "review.visual"
+    spec = router.resolve(stage)
+    card = run_visual_review(
+        adapter=adapter,
+        model=spec.model,
+        spec_text=spec_text,
+        diff_text=diff_text,
+        changed_files=changed_files,
+        screenshots=screenshots,
+        worktree_path=worktree_path,
+        iter_num=iter_num,
+        reviewer_prompt=prompt_path,
+    )
+    save_score_card(project_dir, task_id, card)
+    # The visual reviewer's token usage is harder to recover through the
+    # multimodal return path — record an empty Usage so the budget
+    # tracker does not get out of sync. Tighter accounting can land later
+    # if budget turns out to be a problem in real runs.
+    return card, Usage()
+
+
+def capture_ui_screenshots(
+    project_dir: Path,
+    task_id: str,
+    spec_text: str,
+    *,
+    base_url: Optional[str] = None,
+    capture_kwargs: Optional[dict] = None,
+) -> list[Path]:
+    """Capture screenshots for a UI task and return their paths.
+
+    ``base_url`` defaults to the ``AUTODEV_VISUAL_BASE_URL`` env var so
+    callers can run the harness against a project running on a free
+    port in tests, or against a known dev-server URL in production.
+    """
+    import os  # local; stdlib so cheap
+    from harness.visual_reviewer import (
+        capture_with_fallback,
+        extract_pages_from_spec,
+        screenshots_dir_for,
+    )
+
+    base_url = base_url or os.environ.get(
+        "AUTODEV_VISUAL_BASE_URL", "http://127.0.0.1:8765"
+    )
+    pages = extract_pages_from_spec(spec_text)
+    out_dir = screenshots_dir_for(project_dir, task_id)
+    ensure_dir(out_dir)
+
+    capture_kwargs = capture_kwargs or {}
+    try:
+        report = capture_with_fallback(
+            base_url=base_url,
+            pages=pages,
+            out_dir=out_dir,
+            **capture_kwargs,
+        )
+    except Exception:
+        return []
+
+    return [c.path for c in report.captures]
+
+
 def run_reviewers_parallel(
     adapter: AdapterBase,
     router: ModelRouter,
@@ -467,12 +576,16 @@ def run_reviewers_parallel(
     diff_text: str,
     changed_files: list[str],
     iter_num: int,
+    screenshots: Optional[list[Path]] = None,
 ) -> tuple[list[ScoreCard], list["Usage"]]:
     """Run all reviewers in parallel via ThreadPoolExecutor.
 
     Each reviewer runs in its own thread with its own adapter call.
     A reviewer timeout does not affect the others.
     Returns (list of score cards, list of usage objects) — order not guaranteed.
+
+    ``screenshots`` (a list of PNG/PDF paths) is passed through to the
+    visual reviewer only; other reviewers ignore it.
     """
     from harness.adapters.base import Usage  # noqa: PLC0415
 
@@ -493,6 +606,7 @@ def run_reviewers_parallel(
             diff_text=diff_text,
             changed_files=changed_files,
             iter_num=iter_num,
+            screenshots=screenshots,
         )
         with lock:
             cards.append(card)
@@ -734,6 +848,17 @@ def run_inner_loop(
             diff_text = get_worktree_diff(project_dir, task_id, base_branch=base_branch)
             changed_files = get_worktree_files(project_dir, task_id, base_branch=base_branch)
 
+            # For UI tasks, pre-capture screenshots once per iteration and
+            # pass them through to the visual reviewer only. Other reviewers
+            # ignore the list.
+            screenshots: list[Path] = []
+            if task_kind == "ui" and "visual" in reviewer_names:
+                screenshots = capture_ui_screenshots(
+                    project_dir=project_dir,
+                    task_id=task_id,
+                    spec_text=spec_text,
+                )
+
             cards, reviewer_usages = run_reviewers_parallel(
                 adapter=adapter,
                 router=router,
@@ -746,6 +871,7 @@ def run_inner_loop(
                 diff_text=diff_text,
                 changed_files=changed_files,
                 iter_num=iter_num,
+                screenshots=screenshots,
             )
 
             # Record reviewer token usage

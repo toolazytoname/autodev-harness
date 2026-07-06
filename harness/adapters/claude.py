@@ -28,6 +28,94 @@ class ClaudeAdapter(AdapterBase):
     # Increase base delay — claude's rate limits benefit from slightly longer waits
     RETRY_BASE_DELAY: float = 2.0
 
+    def run_with_attachments(
+        self,
+        prompt: str,
+        attachments,
+        *,
+        model: str,
+        cwd: Path | str | None = None,
+        timeout: int = 120,
+    ) -> AgentResult:
+        """Run claude -p with image/PDF attachments.
+
+        The current claude CLI accepts multimodal inputs by listing file
+        paths as positional arguments after the prompt (or as stdin
+        prompt followed by the files). When attachments are present we
+        route them through the same path the CLI uses for screenshots,
+        which keeps the JSON-mode behaviour: stdout is the JSON envelope
+        with ``result`` and ``usage``.
+        """
+        from harness.adapters.base import AdapterError  # local import to avoid cycles
+
+        if isinstance(cwd, str):
+            cwd = Path(cwd)
+        cwd = cwd or Path.cwd()
+
+        attachments = [Path(p) for p in attachments]
+        missing = [p for p in attachments if not p.exists()]
+        if missing:
+            raise AdapterError(f"Attachments not found: {missing}")
+
+        cmd = ["claude", "-p", "--model", model, "--output-format", "json"]
+        cmd.extend(str(p) for p in attachments)
+
+        start_time = time.monotonic()
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=cwd,
+                text=True,
+                encoding="utf-8",
+            )
+            assert proc.stdin is not None
+            assert proc.stdout is not None
+            assert proc.stderr is not None
+            try:
+                stdout, stderr = proc.communicate(input=prompt, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                raise TimeoutError(
+                    f"claude multimodal subprocess timed out after {timeout}s"
+                )
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            raise AdapterError(f"Failed to execute claude (multimodal): {exc}") from exc
+
+        exit_code = proc.returncode
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+
+        if "429" in stderr or "rate limit" in stderr.lower():
+            exc = RateLimitError(f"Rate limit hit: {stderr.strip()}")
+            exc._result = AgentResult(
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=exit_code,
+                usage=Usage(duration_ms=duration_ms),
+                retry_count=0,
+            )
+            raise exc
+
+        if exit_code != 0:
+            raise AdapterError(
+                f"claude (multimodal) exited with code {exit_code}: {stderr.strip()}"
+            )
+
+        usage, result_text = self._parse_json_output(stdout, duration_ms, 0)
+        return AgentResult(
+            stdout=result_text,
+            stderr=stderr,
+            exit_code=exit_code,
+            usage=usage,
+            duration_ms=duration_ms,
+            retry_count=0,
+        )
+
     def _build_cmd(
         self,
         prompt: str,
