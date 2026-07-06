@@ -132,7 +132,12 @@ class TestExtractUiOutput:
 class TestPhases:
     def test_research_writes_artifact(self, project_dir, mock_router, agents_dir):
         adapter = MagicMock()
-        adapter.run.return_value = _agent_result("# 研究报告\n\n内容")
+        adapter.run.return_value = _agent_result(
+            "# 研究报告\n\n## 复用决策表\n\n"
+            "| 候选 | URL | 成熟度 | 覆盖% | 决策 | 理由 |\n"
+            "|------|-----|--------|-------|------|------|\n"
+            "| foo/bar | https://github.com/foo/bar | active | 50 | wrap | 包装而非自研 |\n"
+        )
         p = make_pipeline(project_dir, adapter, mock_router, agents_dir)
 
         path = p.phase_research()
@@ -150,6 +155,57 @@ class TestPhases:
         p = make_pipeline(empty, MagicMock(), mock_router, agents_dir)
         with pytest.raises(PipelineError, match="000-brief"):
             p.phase_research()
+
+    def test_research_rejects_report_without_table(self, project_dir, mock_router, agents_dir):
+        # A report that lacks the 复用决策表 section must be rejected by
+        # the gate, not silently advanced to plan.
+        adapter = MagicMock()
+        adapter.run.return_value = _agent_result("# 研究报告\n\n只是普通文字\n")
+        p = make_pipeline(project_dir, adapter, mock_router, agents_dir)
+
+        with pytest.raises(PipelineError, match="reuse-table gate"):
+            p.phase_research()
+
+    def test_research_rejects_empty_decision_table(self, project_dir, mock_router, agents_dir):
+        # The header is present but no decision rows — also rejected.
+        adapter = MagicMock()
+        adapter.run.return_value = _agent_result(
+            "# 研究报告\n\n## 复用决策表\n\n| 候选 | URL | 成熟度 | 覆盖% | 决策 | 理由 |\n|------|-----|--------|-------|------|------|\n"
+        )
+        p = make_pipeline(project_dir, adapter, mock_router, agents_dir)
+
+        with pytest.raises(PipelineError, match="reuse-table gate"):
+            p.phase_research()
+
+    def test_research_rejects_header_without_table(self, project_dir, mock_router, agents_dir):
+        # CRITICAL edge case (found in code review): the section header is
+        # present so has_reuse_table() returns True, but the body is just
+        # prose with no markdown table. parse_reuse_table raises
+        # MissingReuseTableError; the gate must catch it and produce a
+        # clean PipelineError instead of letting it propagate.
+        adapter = MagicMock()
+        adapter.run.return_value = _agent_result(
+            "# 研究报告\n\n## 复用决策表\n\n只是一段普通说明文字，没有表格。\n"
+        )
+        p = make_pipeline(project_dir, adapter, mock_router, agents_dir)
+
+        with pytest.raises(PipelineError, match="reuse-table gate"):
+            p.phase_research()
+
+    def test_research_accepts_well_formed_table(self, project_dir, mock_router, agents_dir):
+        adapter = MagicMock()
+        adapter.run.return_value = _agent_result(
+            "# 研究报告\n\n"
+            "## 复用决策表\n\n"
+            "| 候选 | URL | 成熟度 | 覆盖% | 决策 | 理由 |\n"
+            "|------|-----|--------|-------|------|------|\n"
+            "| acme/widget | https://github.com/acme/widget | active | 80 | wrap | 覆盖核心功能 |\n"
+        )
+        p = make_pipeline(project_dir, adapter, mock_router, agents_dir)
+        path = p.phase_research()
+        assert path.exists()
+        # The decision should have been recorded in usage.
+        mock_router.record.assert_called_with("research", adapter.run.return_value.usage)
 
     def test_plan_auto_approves_non_tty(self, project_dir, mock_router, agents_dir):
         (project_dir / "001-research-report.md").write_text("# 研究报告")
@@ -203,6 +259,51 @@ class TestPhases:
         assert path.exists()
         assert len(queue.tasks) == 2
         assert queue.tasks[0].title == "实现数据层"  # taskgen "name" alias
+
+    def test_tasks_rejects_queue_without_acceptance(self, project_dir, mock_router, agents_dir):
+        # T11: a queue with empty acceptance must be rejected before
+        # being persisted. Pipeline surfaces this as a clean
+        # PipelineError so the user knows what to fix.
+        (project_dir / "002-plan.md").write_text("# 计划")
+        bad_queue = json.dumps({
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "name": "X",
+                    "description": "no acceptance",
+                    "kind": "logic",
+                    "status": "pending",
+                    "dependencies": [],
+                    "acceptance": [],
+                }
+            ]
+        })
+        adapter = MagicMock()
+        adapter.run.return_value = _agent_result(bad_queue)
+        p = make_pipeline(project_dir, adapter, mock_router, agents_dir)
+        with pytest.raises(PipelineError, match="invalid task queue"):
+            p.phase_tasks()
+
+    def test_tasks_rejects_queue_with_unknown_kind(self, project_dir, mock_router, agents_dir):
+        # T11: a queue with an unknown kind must also be rejected.
+        (project_dir / "002-plan.md").write_text("# 计划")
+        bad_queue = json.dumps({
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "name": "X",
+                    "kind": "frontend",  # not in whitelist
+                    "status": "pending",
+                    "dependencies": [],
+                    "acceptance": ["$ pytest -q"],
+                }
+            ]
+        })
+        adapter = MagicMock()
+        adapter.run.return_value = _agent_result(bad_queue)
+        p = make_pipeline(project_dir, adapter, mock_router, agents_dir)
+        with pytest.raises(PipelineError, match="invalid task queue"):
+            p.phase_tasks()
 
     def test_tasks_rejects_invalid_json(self, project_dir, mock_router, agents_dir):
         (project_dir / "002-plan.md").write_text("# 计划")
@@ -289,6 +390,14 @@ class TestPipelineRun:
             if "# ui-design agent prompt" in prompt:
                 return _agent_result(
                     "---SPEC---\nspec\n---HTML---\n<html></html>\n---END---"
+                )
+            if "# researcher agent prompt" in prompt:
+                return _agent_result(
+                    "# 研究报告\n\n"
+                    "## 复用决策表\n\n"
+                    "| 候选 | URL | 成熟度 | 覆盖% | 决策 | 理由 |\n"
+                    "|------|-----|--------|-------|------|------|\n"
+                    "| foo/bar | https://github.com/foo/bar | active | 50 | wrap | 包装而非自研 |\n"
                 )
             return _agent_result("# 输出")
 

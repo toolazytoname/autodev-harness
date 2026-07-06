@@ -343,6 +343,7 @@ def run_single_reviewer(
     changed_files: list[str],
     iter_num: int,
     screenshots: Optional[list[Path]] = None,
+    acceptance: Optional[list[str]] = None,
 ) -> tuple[ScoreCard, "Usage"]:
     """Run a single reviewer and return its score card and token usage.
 
@@ -381,7 +382,20 @@ def run_single_reviewer(
 
     prompt_template = prompt_path.read_text()
 
-    # Inject context into the prompt
+    # Inject context into the prompt. ``acceptance`` is a list of
+    # human-readable steps the test reviewer is expected to convert
+    # into executable commands; other reviewers use it as a checklist
+    # that the spec was met.
+    acceptance_block = ""
+    if acceptance:
+        numbered = "\n".join(f"{i+1}. {step}" for i, step in enumerate(acceptance))
+        acceptance_block = (
+            "\n## Task Acceptance Criteria (from taskgen)\n"
+            "The author of this task committed to these acceptance steps.\n"
+            "For each step, decide if the diff/spec proves it's met.\n"
+            f"{numbered}\n"
+        )
+
     prompt = textwrap.dedent(
         """\
         {prompt_template}
@@ -400,7 +414,7 @@ def run_single_reviewer(
 
         ## Product Specification
         {spec}
-
+        {acceptance_block}
         Output your score card as JSON at the end of your response.
         """
     ).format(
@@ -411,6 +425,7 @@ def run_single_reviewer(
         changed_files="\n".join(f"- {f}" for f in changed_files) if changed_files else "(no files changed yet)",
         diff=diff_text or "(no diff yet — this is the first iteration)",
         spec=spec_text,
+        acceptance_block=acceptance_block,
     )
 
     try:
@@ -577,6 +592,7 @@ def run_reviewers_parallel(
     changed_files: list[str],
     iter_num: int,
     screenshots: Optional[list[Path]] = None,
+    acceptance: Optional[list[str]] = None,
 ) -> tuple[list[ScoreCard], list["Usage"]]:
     """Run all reviewers in parallel via ThreadPoolExecutor.
 
@@ -586,6 +602,11 @@ def run_reviewers_parallel(
 
     ``screenshots`` (a list of PNG/PDF paths) is passed through to the
     visual reviewer only; other reviewers ignore it.
+
+    ``acceptance`` (a list of human-readable test steps) is passed to
+    every reviewer. The test reviewer is expected to convert each
+    step into an executable command; other reviewers use it as
+    evidence the spec was met.
     """
     from harness.adapters.base import Usage  # noqa: PLC0415
 
@@ -607,6 +628,7 @@ def run_reviewers_parallel(
             changed_files=changed_files,
             iter_num=iter_num,
             screenshots=screenshots,
+            acceptance=acceptance,
         )
         with lock:
             cards.append(card)
@@ -872,6 +894,7 @@ def run_inner_loop(
                 changed_files=changed_files,
                 iter_num=iter_num,
                 screenshots=screenshots,
+                acceptance=list(task.acceptance) if task and task.acceptance else None,
             )
 
             # Record reviewer token usage

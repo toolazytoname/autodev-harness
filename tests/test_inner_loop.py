@@ -185,6 +185,113 @@ class TestGateCheck:
 
 
 # ---------------------------------------------------------------------------
+# Acceptance wiring — the inner loop must forward task acceptance steps
+# to every reviewer so the test reviewer can convert them into commands.
+# ---------------------------------------------------------------------------
+
+
+class TestAcceptanceForwardedToReviewer:
+    def test_acceptance_appears_in_reviewer_prompt(
+        self, tmp_path, mock_router
+    ):
+        """run_single_reviewer must inject the task's acceptance steps
+        into the reviewer's prompt as a numbered block.
+
+        Per T11: this is what lets the test reviewer convert acceptance
+        into executable commands.
+        """
+        from harness.adapters.base import AgentResult, Usage
+        from harness.inner_loop import run_single_reviewer
+
+        # Set up a worktree-like path the reviewer prompt can mention
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        project_dir = tmp_path / "proj"
+        project_dir.mkdir()
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        prompt_path = agents_dir / "test.md"
+        prompt_path.write_text("# Test reviewer prompt\n")
+
+        adapter = MagicMock()
+        adapter.run.return_value = AgentResult(
+            stdout='{"reviewer":"test","iter":1,"score":0.9,"blockers":[],"suggestions":[],"evidence":"ok"}',
+            stderr="",
+            exit_code=0,
+            usage=Usage(input_tokens=1, output_tokens=1, total_tokens=2),
+            duration_ms=1,
+        )
+
+        run_single_reviewer(
+            adapter=adapter,
+            router=mock_router,
+            worktree_path=worktree,
+            project_dir=project_dir,
+            task_id="task-1",
+            reviewer_name="test",
+            prompt_path=prompt_path,
+            spec_text="# Spec",
+            diff_text="",
+            changed_files=[],
+            iter_num=1,
+            acceptance=[
+                "$ pytest -q",
+                "Visit /login and submit empty form",
+            ],
+        )
+
+        prompt_sent = adapter.run.call_args[0][0]
+        assert "Task Acceptance Criteria" in prompt_sent
+        assert "1. $ pytest -q" in prompt_sent
+        assert "2. Visit /login and submit empty form" in prompt_sent
+
+    def test_no_acceptance_omits_block(
+        self, tmp_path, mock_router
+    ):
+        """When the task has no acceptance (legacy), the block must
+        not appear in the prompt — reviewer sees just the spec/diff.
+        """
+        from harness.adapters.base import AgentResult, Usage
+        from harness.inner_loop import run_single_reviewer
+
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        project_dir = tmp_path / "proj"
+        project_dir.mkdir()
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        prompt_path = agents_dir / "test.md"
+        prompt_path.write_text("# Test reviewer prompt\n")
+
+        adapter = MagicMock()
+        adapter.run.return_value = AgentResult(
+            stdout='{"reviewer":"test","iter":1,"score":0.9,"blockers":[],"suggestions":[],"evidence":"ok"}',
+            stderr="",
+            exit_code=0,
+            usage=Usage(input_tokens=1, output_tokens=1, total_tokens=2),
+            duration_ms=1,
+        )
+
+        run_single_reviewer(
+            adapter=adapter,
+            router=mock_router,
+            worktree_path=worktree,
+            project_dir=project_dir,
+            task_id="task-1",
+            reviewer_name="test",
+            prompt_path=prompt_path,
+            spec_text="# Spec",
+            diff_text="",
+            changed_files=[],
+            iter_num=1,
+            acceptance=None,
+        )
+
+        prompt_sent = adapter.run.call_args[0][0]
+        assert "Task Acceptance Criteria" not in prompt_sent
+
+
+# ---------------------------------------------------------------------------
 # Escalation report
 # ---------------------------------------------------------------------------
 

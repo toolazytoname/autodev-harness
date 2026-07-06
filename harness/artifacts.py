@@ -138,6 +138,63 @@ class TaskStatus(str, Enum):
     DONE = "done"
 
 
+class Kind(str, Enum):
+    """Task kind — determines which reviewer combination the inner loop uses.
+
+    Values are stable strings; they appear in 003-task-queue.json and are
+    matched against config/reviewers.yaml. Do not rename without updating
+    the YAML.
+    """
+
+    UI = "ui"
+    API = "api"
+    LOGIC = "logic"
+    INFRA = "infra"
+
+
+def _legacy_default_acceptance() -> list[str]:
+    """Sentinel acceptance for legacy task-queue files (pre-T11)."""
+    return ["(legacy) — please add acceptance criteria before re-running"]
+
+
+def _validate_acceptance(v: Any) -> list[str]:
+    """Ensure acceptance is a non-empty list of non-blank strings.
+
+    Per MASTER-PLAN §3 (P3): every task must have at least one executable
+    acceptance criterion — the test reviewer converts each item directly
+    into an execution step.
+    """
+    if not isinstance(v, list):
+        raise ValueError(f"acceptance must be a list, got {type(v).__name__}")
+    if not v:
+        raise ValueError("acceptance must contain at least one item — see MASTER-PLAN §3 (P3)")
+    cleaned: list[str] = []
+    for i, item in enumerate(v):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"acceptance[{i}] must be a string, got {type(item).__name__}"
+            )
+        if not item.strip():
+            raise ValueError(f"acceptance[{i}] must not be empty or whitespace-only")
+        cleaned.append(item)
+    return cleaned
+
+
+def _validate_kind(v: Any) -> Any:
+    """Accept a string in the kind whitelist, return its canonical form."""
+    if isinstance(v, str):
+        if not v.strip():
+            raise ValueError("kind must be a non-empty string")
+        try:
+            return Kind(v).value
+        except ValueError as e:
+            allowed = sorted(k.value for k in Kind)
+            raise ValueError(
+                f"kind must be one of {allowed}, got {v!r}"
+            ) from e
+    return v
+
+
 class Task(pydantic.BaseModel):
     """Single task in the task queue."""
 
@@ -150,9 +207,30 @@ class Task(pydantic.BaseModel):
     description: Optional[str] = None
     status: TaskStatus = TaskStatus.PENDING
     dependencies: list[str] = pydantic.Field(default_factory=list)
-    acceptance: list[str] = pydantic.Field(default_factory=list)
+    # Acceptance is non-empty by default — taskgen must supply ≥1 step.
+    # The legacy backcompat path uses a sentinel default; pipeline
+    # validation can detect and reject that sentinel.
+    acceptance: list[str] = pydantic.Field(default_factory=_legacy_default_acceptance)
     kind: str = "logic"  # ui | api | logic | infra
     iteration_count: int = 0
+
+    @pydantic.field_validator("acceptance", mode="before")
+    @classmethod
+    def _validate_acceptance_field(cls, v: Any) -> list[str]:
+        # If the JSON omits the field, default_factory runs first and
+        # produces the sentinel; we must not run our non-empty check on
+        # that. We detect the sentinel by content. If the field IS
+        # provided (even as []), we run the strict validation.
+        if v is None:
+            return _legacy_default_acceptance()
+        return _validate_acceptance(v)
+
+    @pydantic.field_validator("kind", mode="before")
+    @classmethod
+    def _validate_kind_field(cls, v: Any) -> Any:
+        if v is None:
+            return "logic"
+        return _validate_kind(v)
 
 
 class TaskQueue(pydantic.BaseModel):

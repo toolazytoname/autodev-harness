@@ -200,6 +200,114 @@ class TestTaskModel:
         with pytest.raises(pydantic.ValidationError):
             task.status = TaskStatus.COMPLETED  # type: ignore
 
+    def test_task_default_kind_is_logic(self):
+        task = Task(id="task-001", title="Do thing", acceptance=["x"])
+        assert task.kind == "logic"
+        assert task.acceptance == ["x"]
+
+    def test_task_kind_accepts_known_values(self):
+        for k in ("ui", "api", "logic", "infra"):
+            t = Task(id=f"t-{k}", title="x", kind=k, acceptance=["a"])
+            assert t.kind == k
+
+    def test_task_kind_rejects_unknown_values(self):
+        with pytest.raises(pydantic.ValidationError):
+            Task(id="t-1", title="x", kind="frontend", acceptance=["a"])
+
+    def test_task_kind_rejects_empty_string(self):
+        with pytest.raises(pydantic.ValidationError):
+            Task(id="t-1", title="x", kind="", acceptance=["a"])
+
+    def test_task_acceptance_must_be_non_empty(self):
+        # Per T11 / MASTER-PLAN §3 (P3): every task must have at least one
+        # executable acceptance criterion. An empty list is rejected so
+        # taskgen can't sneak through with "no test required".
+        with pytest.raises(pydantic.ValidationError):
+            Task(id="t-1", title="x", kind="logic", acceptance=[])
+
+    def test_task_acceptance_must_be_list_of_strings(self):
+        with pytest.raises(pydantic.ValidationError):
+            Task(id="t-1", title="x", acceptance=[1, 2, 3])  # type: ignore[list-item]
+
+    def test_task_acceptance_rejects_empty_string_item(self):
+        with pytest.raises(pydantic.ValidationError):
+            Task(id="t-1", title="x", acceptance=["", "real acceptance"])
+
+    def test_task_acceptance_rejects_whitespace_only_item(self):
+        with pytest.raises(pydantic.ValidationError):
+            Task(id="t-1", title="x", acceptance=["   ", "real acceptance"])
+
+    def test_task_acceptance_can_hold_user_flow_steps(self):
+        # A common T11 pattern: a UI task's acceptance is a sequence of
+        # user-flow steps the test reviewer can replay verbatim.
+        steps = [
+            "Visit /login and submit empty form -> see 'Email required' error",
+            "Submit with invalid email -> see 'Invalid email format' error",
+            "Submit with valid creds -> redirected to /dashboard",
+        ]
+        t = Task(id="t-1", title="login form", kind="ui", acceptance=steps)
+        assert len(t.acceptance) == 3
+        assert t.acceptance[0].startswith("Visit /login")
+
+
+# ---------------------------------------------------------------------------
+# Kind enum surface — guard against silent rename
+# ---------------------------------------------------------------------------
+
+
+class TestKindEnum:
+    def test_kind_values_match(self):
+        from harness.artifacts import Kind
+
+        assert {k.value for k in Kind} == {"ui", "api", "logic", "infra"}
+
+    def test_kind_str_alias_resolves(self):
+        from harness.artifacts import Kind
+
+        # Many call sites pass a plain string; Kind(str) should work
+        # to make sure reviewers can pass user-provided kinds safely.
+        assert Kind("ui") is Kind.UI
+        assert Kind("api") is Kind.API
+        assert Kind("logic") is Kind.LOGIC
+        assert Kind("infra") is Kind.INFRA
+
+    def test_invalid_kind_str_raises(self):
+        from harness.artifacts import Kind
+
+        with pytest.raises(ValueError):
+            Kind("frontend")
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat: old task-queue JSON without kind/acceptance still loads
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyTaskQueueBackcompat:
+    def test_task_without_kind_defaults_to_logic(self):
+        # Old task-queue files from before T11 don't have `kind` or
+        # `acceptance` fields. Loading them must not raise; instead the
+        # sentinel acceptance is set so the pipeline can detect and
+        # reject the legacy task at validation time.
+        from harness.artifacts import Task
+
+        raw = {"id": "old-1", "title": "Legacy task"}
+        task = Task.model_validate(raw)
+        # kind defaults to "logic" (matches reviewer.yaml default)
+        assert task.kind == "logic"
+        # acceptance is the legacy sentinel — pipeline validation
+        # detects this and forces the user to add real acceptance.
+        assert task.acceptance == [
+            "(legacy) — please add acceptance criteria before re-running"
+        ]
+
+    def test_task_with_legacy_kind_string(self):
+        from harness.artifacts import Task
+
+        raw = {"id": "old-1", "title": "Legacy", "kind": "api", "acceptance": ["passes x"]}
+        task = Task.model_validate(raw)
+        assert task.kind == "api"
+
 
 class TestTaskQueueModel:
     def test_task_queue_from_json_normalizes_done(self):

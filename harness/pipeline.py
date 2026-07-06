@@ -397,6 +397,23 @@ class Pipeline:
         result = self._call_agent(Phase.RESEARCH, brief)
         path = write_artifact(self._config.project_dir, "001-research-report", result.stdout)
         self._log(f"Research report saved: {path}")
+
+        # Per MASTER-PLAN P4 / TASKS T10: a research report without a
+        # reuse decision table is not allowed to advance into the plan
+        # phase. Refuse explicitly with a one-line diagnostic so the
+        # researcher (or a human) can fix it without re-running the
+        # whole pipeline.
+        from harness.research_validation import validate_research_report
+
+        validation = validate_research_report(result.stdout)
+        if not validation.is_valid:
+            raise PipelineError(
+                f"research report rejected by reuse-table gate: {validation.error}"
+            )
+        if validation.table is not None:
+            self._log(
+                f"Reuse decision table: {len(validation.table.decisions)} decision(s) parsed"
+            )
         return path
 
     def phase_plan(self) -> Path:
