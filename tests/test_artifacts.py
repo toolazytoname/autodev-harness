@@ -308,6 +308,48 @@ class TestLegacyTaskQueueBackcompat:
         task = Task.model_validate(raw)
         assert task.kind == "api"
 
+    def test_task_default_platform_is_web(self):
+        task = Task(id="t-1", title="x", acceptance=["a"])
+        assert task.platform == "web"
+
+    def test_task_platform_accepts_known_values(self):
+        for p in ("web", "mobile", "miniprogram"):
+            t = Task(id=f"t-{p}", title="x", platform=p, acceptance=["a"])
+            assert t.platform == p
+
+    def test_task_platform_rejects_unknown_values(self):
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            Task(id="t-1", title="x", platform="watch-os", acceptance=["a"])
+
+    def test_task_platform_none_becomes_web(self):
+        # Missing / None must default to web, not raise.
+        from harness.artifacts import Task
+
+        task = Task.model_validate({"id": "t-1", "title": "x", "acceptance": ["a"]})
+        assert task.platform == "web"
+
+    def test_task_empty_platform_becomes_web(self):
+        from harness.artifacts import Task
+
+        task = Task.model_validate(
+            {"id": "t-1", "title": "x", "acceptance": ["a"], "platform": ""}
+        )
+        assert task.platform == "web"
+
+
+# ---------------------------------------------------------------------------
+# Platform enum surface
+# ---------------------------------------------------------------------------
+
+
+class TestPlatformEnum:
+    def test_platform_values_match(self):
+        from harness.artifacts import Platform
+
+        assert {p.value for p in Platform} == {"web", "mobile", "miniprogram"}
+
 
 class TestTaskQueueModel:
     def test_task_queue_from_json_normalizes_done(self):

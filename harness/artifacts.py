@@ -152,6 +152,22 @@ class Kind(str, Enum):
     INFRA = "infra"
 
 
+class Platform(str, Enum):
+    """Target platform for a UI/API task (T13 / MASTER-PLAN §3 P5).
+
+    Determines which cross-platform reviewer the inner loop adds on
+    top of the kind's default set:
+
+    - ``web``        → no extra reviewer (visual covers it)
+    - ``mobile``     → mobile (Maestro flow validation)
+    - ``miniprogram``→ miniprogram (automator on macOS)
+    """
+
+    WEB = "web"
+    MOBILE = "mobile"
+    MINIPROGRAM = "miniprogram"
+
+
 def _legacy_default_acceptance() -> list[str]:
     """Sentinel acceptance for legacy task-queue files (pre-T11)."""
     return ["(legacy) — please add acceptance criteria before re-running"]
@@ -212,6 +228,9 @@ class Task(pydantic.BaseModel):
     # validation can detect and reject that sentinel.
     acceptance: list[str] = pydantic.Field(default_factory=_legacy_default_acceptance)
     kind: str = "logic"  # ui | api | logic | infra
+    # T13: target platform for cross-platform reviewer selection.
+    # Empty / unknown platforms are treated as "web" (no extra reviewer).
+    platform: str = "web"
     iteration_count: int = 0
 
     @pydantic.field_validator("acceptance", mode="before")
@@ -231,6 +250,22 @@ class Task(pydantic.BaseModel):
         if v is None:
             return "logic"
         return _validate_kind(v)
+
+    @pydantic.field_validator("platform", mode="before")
+    @classmethod
+    def _validate_platform_field(cls, v: Any) -> Any:
+        # Default to web (no extra reviewer). Unknown / None / empty
+        # all become "web" — better to fall back to the cheapest path
+        # than to reject the queue.
+        if v is None or v == "":
+            return "web"
+        if isinstance(v, str):
+            if v not in {p.value for p in Platform}:
+                allowed = sorted(p.value for p in Platform)
+                raise ValueError(
+                    f"platform must be one of {allowed}, got {v!r}"
+                )
+        return v
 
 
 class TaskQueue(pydantic.BaseModel):

@@ -35,6 +35,10 @@ class ReviewerConfig(pydantic.BaseModel):
     default: list[str]
     reviewers: dict[str, list[str]] = pydantic.Field(default_factory=dict)
     overrides: dict[str, dict[str, list[str]]] = pydantic.Field(default_factory=dict)
+    # T13: optional per-platform reviewer additions. The platform
+    # dimension is layered ON TOP of the kind's reviewer set — see
+    # :meth:`ReviewerAssembly.get_reviewer_names`.
+    platform_reviewers: dict[str, list[str]] = pydantic.Field(default_factory=dict)
 
 
 class ReviewerAssembly:
@@ -61,19 +65,37 @@ class ReviewerAssembly:
             raw = yaml.safe_load(fh)
         return ReviewerConfig.model_validate(raw)
 
-    def get_reviewer_names(self, task_kind: str) -> list[str]:
+    def get_reviewer_names(
+        self,
+        task_kind: str,
+        platform: Optional[str] = None,
+    ) -> list[str]:
         """Return the ordered list of reviewer names for a task kind.
+
+        If *platform* is given, the platform-specific reviewers are
+        appended (de-duplicated, order-preserving).
 
         Falls back to ``default`` if the kind is not explicitly configured.
         """
-        reviewers = self._config.reviewers.get(
-            task_kind,
-            self._config.default,
+        # Copy the list out of the config so platform additions don't
+        # mutate the frozen config's reviewer list (a previous version
+        # of this function did exactly that and tests caught it).
+        reviewers = list(
+            self._config.reviewers.get(task_kind, self._config.default)
         )
         # Check for per-kind overrides
         override = self._config.overrides.get(task_kind, {}).get("reviewers")
         if override is not None:
-            reviewers = override
+            reviewers = list(override)
+
+        if platform:
+            platform_additions = self._config.platform_reviewers.get(platform, [])
+            # Order-preserving de-dupe
+            seen = set(reviewers)
+            for name in platform_additions:
+                if name not in seen:
+                    reviewers.append(name)
+                    seen.add(name)
         return list(reviewers)
 
     def get_prompt_path(self, reviewer_name: str) -> Path:

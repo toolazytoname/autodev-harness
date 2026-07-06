@@ -22,7 +22,7 @@ class TestReviewerAssembly:
         d = tmp_path / "agents" / "reviewers"
         d.mkdir(parents=True)
         # Create stub prompt files for known reviewers
-        for name in ["correctness", "test", "boundary", "security", "visual", "a11y"]:
+        for name in ["correctness", "test", "boundary", "security", "visual", "a11y", "mobile", "miniprogram"]:
             (d / f"{name}.md").write_text(f"# {name}\nstub content")
         return d
 
@@ -93,6 +93,61 @@ reviewers:
         )
         names = assembly.get_reviewer_names("unknown-kind")
         assert names == ["correctness", "test", "boundary"]
+
+    def test_resolve_with_platform_adds_reviewer(self, config_dir, agents_dir):
+        # T13: when platform is set, the platform-specific reviewer
+        # is appended to the kind's set. Web adds nothing (visual is
+        # already in the ui kind).
+        assembly = ReviewerAssembly(
+            config_path=config_dir / "reviewers.yaml",
+            agents_dir=agents_dir,
+        )
+        # Add a platform_reviewers section to the YAML
+        yaml_path = config_dir / "reviewers.yaml"
+        text = yaml_path.read_text()
+        text += (
+            "\nplatform_reviewers:\n"
+            "  web: []\n"
+            "  mobile: [mobile]\n"
+            "  miniprogram: [miniprogram]\n"
+        )
+        yaml_path.write_text(text)
+        assembly = ReviewerAssembly(
+            config_path=yaml_path,
+            agents_dir=agents_dir,
+        )
+        # ui + mobile → ui's set + 'mobile'
+        names = assembly.get_reviewer_names("ui", platform="mobile")
+        assert "mobile" in names
+        assert "visual" in names  # ui's base set
+        # logic + miniprogram → logic's set + 'miniprogram'
+        names = assembly.get_reviewer_names("logic", platform="miniprogram")
+        assert "miniprogram" in names
+        assert "test" in names  # logic's base set
+        # web → no additions
+        names = assembly.get_reviewer_names("ui", platform="web")
+        assert names == ["correctness", "test", "boundary", "a11y", "visual"]
+        # No platform → no additions
+        names = assembly.get_reviewer_names("ui")
+        assert "mobile" not in names
+
+    def test_resolve_with_platform_dedupes(self, config_dir, agents_dir):
+        # If the kind's set already includes a reviewer, adding it via
+        # platform must NOT duplicate it.
+        assembly_yaml = config_dir / "reviewers.yaml"
+        text = assembly_yaml.read_text()
+        text += (
+            "\nplatform_reviewers:\n"
+            "  mobile: [visual]\n"  # 'visual' is already in the ui set
+        )
+        assembly_yaml.write_text(text)
+        assembly = ReviewerAssembly(
+            config_path=assembly_yaml,
+            agents_dir=agents_dir,
+        )
+        names = assembly.get_reviewer_names("ui", platform="mobile")
+        # Order preserved, no duplicates
+        assert names == ["correctness", "test", "boundary", "a11y", "visual"]
 
     def test_resolve_prompts_filters_nonexistent(self, config_dir, agents_dir):
         # Remove one prompt file to test filtering

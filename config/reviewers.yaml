@@ -1,5 +1,5 @@
 # AutoDevHarness v2 — Reviewer Configuration
-# Per MASTER-PLAN §2 + T05 spec
+# Per MASTER-PLAN §2 + T05 spec + T13 cross-platform testing
 #
 # Maps task `kind` to a list of reviewer identifiers.
 # The inner loop runs all assigned reviewers in parallel.
@@ -40,6 +40,30 @@ reviewers:
     - test
     - boundary
     - security
+
+# ----------------------------------------------------------------------
+# Cross-platform dimension (T13 / MASTER-PLAN §3 P5)
+#
+# `platform` overrides the reviewer selection by adding a platform-
+# specific reviewer on top of the kind's default set:
+#   web         → visual (Playwright screenshots) — already covered
+#                 by the `ui` kind, no extra reviewer needed
+#   mobile      → mobile (Maestro flow validation)
+#   miniprogram → miniprogram (miniprogram-automator on macOS)
+#
+# The platform dimension does NOT replace the kind's reviewers; it
+# ADDS the platform-specific reviewer. The assembly in
+# harness/reviewers.py merges `reviewers.<kind>` with
+# `platform_reviewers.<platform>` and de-duplicates.
+# ----------------------------------------------------------------------
+
+# Platform → additional reviewers
+platform_reviewers:
+  web: []  # visual reviewer is already in the ui kind
+  mobile:
+    - mobile
+  miniprogram:
+    - miniprogram
 
 # Per-reviewer overrides (optional)
 # Allows disabling or reordering reviewers per task kind

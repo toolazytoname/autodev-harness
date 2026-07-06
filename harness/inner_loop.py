@@ -807,9 +807,11 @@ def run_inner_loop(
     from harness.reviewers import ReviewerAssembly
 
     assembly = ReviewerAssembly()
-    reviewer_names = assembly.get_reviewer_names(task_kind)
-
-    # Load the task from the task queue
+    # T13: pass the task's `platform` (web / mobile / miniprogram) so
+    # the assembly can add the cross-platform reviewer on top of the
+    # kind's default set. `task` is loaded below; for the first call
+    # we don't know it yet, so default to web (no extra reviewer).
+    platform: Optional[str] = "web"
     queue = read_task_queue(project_dir)
     if queue is None:
         raise InnerLoopError(f"No task queue found in {project_dir}")
@@ -820,6 +822,9 @@ def run_inner_loop(
             break
     if task is None:
         raise InnerLoopError(f"Task {task_id} not found in task queue")
+    if task.platform:
+        platform = task.platform
+    reviewer_names = assembly.get_reviewer_names(task_kind, platform=platform)
 
     # ---------------------------------------------------------------------------
     # Create worktree for this task
