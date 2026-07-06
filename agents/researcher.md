@@ -29,7 +29,21 @@
    记录"维护活跃度 + 是否满足 brief 中关键需求"。
 3. **deep-research skill**（如可用）：调用一次 deep-research 做大方向
    验证；不要把它当主源，因为它的输出本身就缺少本机仓库的最新 commit 状态。
-4. **结合 1+2+3** 在脑中形成"我到底要自己造什么 vs 在什么上迭代"的判断。
+4. **marketing / paid-acquisition brief 时**：当 Brief 关键词命中以下任一
+   集合时，**必须**调用 `skills-bundle/opendesign/competitive-ads-extractor/SKILL.md`
+   + `skills-bundle/opendesign/ad-creative/SKILL.md` 作为补充调研源：
+
+   | 命中词集合 | 触发 | 补充产出 |
+   |---|---|---|
+   | `landing page / launch / 落地页 / 营销页 / 增长` | 走 `competitive-ads-extractor` | §二 加 1 节"竞品广告拆解"，列 3-5 条真实在投广告的 hook/CTA/视觉语言 |
+   | `paid acquisition / ad copy / 广告文案 / 投放 / 转化` | 走 `ad-creative` | §六 加 1 节"广告创意假设"，列 3-5 条 headline+primary text 候选 |
+
+   这两个 skill 的入口在 `skills-bundle/opendesign/`，导入时间和上游见
+   `skills-bundle/opendesign/SOURCES.md`。**触发判断写在报告末尾
+   "## 七、来源" 节**，注明用了哪个 opendesign skill + 简要理由（≤30 字）。
+   不命中关键词时不要调用，避免给纯生产力工具类 brief 灌入营销噪声。
+
+5. **结合 1+2+3(+4)** 在脑中形成"我到底要自己造什么 vs 在什么上迭代"的判断。
 
 ## 输出格式（唯一允许的格式）
 

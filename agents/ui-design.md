@@ -166,6 +166,31 @@ modules actually each added signal.
 Use as the default if the plan is genuinely category-less or if the
 human picked nothing specific.
 
+## E0. Follow-up style modules (opendesign subset)
+
+These three skills live in `skills-bundle/opendesign/` and are **not** one
+of the four aesthetic directions above. They are *follow-up polishers* —
+the pipeline can call them after a direction is committed, when the
+visual reviewer asks for a specific kind of upgrade.
+
+| Module | When to apply |
+|---|---|
+| `skills-bundle/opendesign/reference-design-contract/` | The brief is vague ("make it feel like this") or comes with reference images / URLs / product notes. Use it **before** any D1–D4 call to turn the reference into a grounded `DESIGN.md` (palette, typography, spacing, motion, anti-patterns). |
+| `skills-bundle/opendesign/emilkowalski-motion/` | First-pass direction landed but motion is flat / generic. Adds restrained micro-interactions, state transitions, and reduced-motion fallbacks. Use **after** D1–D4, not before. |
+| `skills-bundle/opendesign/impeccable-design-polish/` | Direction landed but page still smells AI. Audit / critique / harden / animate / live-review pass. Use **after** D1–D4 + (optionally) motion, as the last polish layer. |
+
+`emil-design-eng` is a *philosophy* skill (the Emil Kowalski design
+engineering worldview) and is **not** a follow-up module — when a
+direction calls for it, its text is concatenated into the D-section
+prompt the same way the three-piece baseline is. The pipeline decides
+this based on whether the brief keyword-matches "design engineering",
+"UI polish philosophy", "component design", or "界面哲学".
+
+The follow-up modules never replace a D-section; they sit *on top* of
+one. The pipeline never calls `reference-design-contract` and a
+D-section in the same call — `reference-design-contract` runs in plan
+phase, D1–D4 runs in ui_design phase.
+
 ## E. How the pipeline picks the direction
 
 The pipeline inspects the brief for lightweight cues: words like
