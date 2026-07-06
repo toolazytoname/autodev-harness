@@ -80,7 +80,41 @@ class AdapterError(Exception):
 
 
 class RateLimitError(AdapterError):
-    """Raised when the remote API returns 429 Too Many Requests."""
+    """Raised when the remote API returns 429 Too Many Requests.
+
+    This is a *transient* rate-limit — the retry loop in ``run()`` will
+    back off and try again. For "quota exhausted" / "usage limit" errors
+    that should *not* be retried (and that should fall back to a cheaper
+    tier), see T16a's ``QuotaExhaustedError``.
+    """
+
+    pass
+
+
+class ServerError(AdapterError):
+    """Raised when the remote API returns a 5xx response.
+
+    Semantically distinct from ``RateLimitError``: 5xx means "upstream is
+    broken", not "you sent too many requests". Call sites that care
+    about the difference (T19, T16a) can split on the exception type.
+    The retry loop in ``run()`` treats both as retryable with the same
+    exponential back-off.
+    """
+
+    pass
+
+
+class TransientError(AdapterError):
+    """Raised for transient OS-level subprocess failures.
+
+    Examples: ``ConnectionError`` (peer reset), ``BrokenPipeError`` (CLI
+    closed stdout), DNS hiccups. These were previously wrapped in plain
+    ``AdapterError`` by ``claude._execute`` and the retry loop skipped
+    them entirely — burning the retry budget on the first failure.
+
+    Surfacing as a dedicated retryable type lets ``run()`` back off and
+    try again, the same as ``RateLimitError`` / ``ServerError``.
+    """
 
     pass
 
@@ -95,6 +129,15 @@ class InvalidResponseError(AdapterError):
     """Raised when the agent returns unparseable or unexpected output."""
 
     pass
+
+
+# Exceptions that ``AdapterBase.run()`` retries with exponential back-off.
+# TimeoutError is intentionally excluded — timeouts are not transient.
+RETRYABLE_EXCEPTIONS: tuple[type[AdapterError], ...] = (
+    RateLimitError,
+    ServerError,
+    TransientError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +213,10 @@ class AdapterBase(ABC):
                 # Success — return immediately
                 return result
 
-            except RateLimitError as exc:
+            except RETRYABLE_EXCEPTIONS as exc:
+                # RateLimit / ServerError / TransientError — all back off
+                # and retry. The final AdapterError raised after exhaustion
+                # keeps the last attempt's result via exc._result.
                 last_result = getattr(exc, "_result", None)
                 delay = self._backoff_delay(attempt)
                 attempt += 1
@@ -251,7 +297,16 @@ class AdapterBase(ABC):
     ) -> AgentResult:
         """Execute the agent run. Override in subclasses.
 
-        Subclasses should raise RateLimitError on 429 and TimeoutError on
-        timeout so the retry logic in run() can handle them appropriately.
+        Subclasses should raise:
+        - ``RateLimitError`` on 429 / rate-limit signals (transient → retry)
+        - ``ServerError`` on 5xx upstream signals (transient → retry)
+        - ``TransientError`` on OS-level subprocess errors
+          (ConnectionError / BrokenPipeError → retry)
+        - ``TimeoutError`` on timeout (NOT retried)
+        - ``AdapterError`` for non-retryable failures
+
+        All retryable exceptions may carry a ``_result: AgentResult``
+        attribute that ``run()`` will surface via the final
+        ``AdapterError`` raised after retry exhaustion.
         """
         ...

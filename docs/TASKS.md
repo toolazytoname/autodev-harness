@@ -243,7 +243,7 @@ merge+complete 构成单一可恢复事务；序列化补全 platform（并审�
 按 tier 注入对应 API key（避免多后端串号）；主模型失败时用 `spec.fallback` 重试；修正 score_card docstring。
 **验收**：worker 档实际打到 MiniMax 端点；主档不可用时自动切 fallback 跑通。**注**：这是 T16c 的前置，T16c 在其上做额度专属降级策略。
 
-### T20 [HIGH] 错误分类结构化（429/5xx/quota 不再靠子串）  ⏳
+### T20 [HIGH] 错误分类结构化（429/5xx/quota 不再靠子串）  ✅ 2026-07-06
 **内容**：`claude.py:179/191` 靠 `"429" in stderr` / `"502" in stderr` 裸子串匹配——路径/token 数/行号里出现数字即误判；
 5xx 被统一装进 `RateLimitError`（语义是 429）表意混乱；真 429 若写进 stdout JSON 则漏检。
 `base.run()` 的 `except Exception` 又把连接重置等**可重试**瞬时错误一律不重试。

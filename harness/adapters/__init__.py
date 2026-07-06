@@ -5,6 +5,20 @@ and returns an AgentResult. Different adapters call different CLI tools
 (claude, opencode, codex) while presenting a unified interface.
 """
 
-from harness.adapters.base import AgentResult, AdapterBase, AdapterError
+from harness.adapters.base import (
+    AdapterBase,
+    AdapterError,
+    AgentResult,
+    RateLimitError,
+    ServerError,
+    TransientError,
+)
 
-__all__ = ["AgentResult", "AdapterBase", "AdapterError"]
+__all__ = [
+    "AgentResult",
+    "AdapterBase",
+    "AdapterError",
+    "RateLimitError",
+    "ServerError",
+    "TransientError",
+]

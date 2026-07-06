@@ -1,12 +1,20 @@
 """Claude CLI adapter.
 
 Calls `claude -p --model X --output-format json` via subprocess.
-Handles exponential back-off on 429/5xx and strips markdown fences from output.
+Handles exponential back-off on 429/5xx/transient errors and strips markdown
+fences from output.
+
+Error classification (T20): prefers structured JSON from
+``--output-format json`` envelopes when available, and falls back to
+word-boundary substring matching on stderr — so a "429" or "500" that
+appears as part of a path or token count no longer false-positives a
+retry.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -17,9 +25,41 @@ from harness.adapters.base import (
     AdapterError,
     AgentResult,
     RateLimitError,
+    ServerError,
     TimeoutError,
+    TransientError,
     Usage,
 )
+
+
+# ---------------------------------------------------------------------------
+# Error classification patterns (T20)
+# ---------------------------------------------------------------------------
+
+# Word-boundary matchers: ``\b429\b`` alone matches noise like
+# ``/var/log/app-429/access.log`` because ``-`` and ``/`` are non-word
+# chars and form a "boundary". So 429 / 5xx are anchored to *context*:
+# an HTTP status line, a status field, or a known error phrase.
+_RATE_LIMIT_RE = re.compile(
+    r"\bHTTP[\s/][\d.]*\s*429\b"
+    r"|\bstatus(?:\s+code)?\s*[:=]?\s*429\b"
+    r"|\b429\s+Too\s+Many\s+Requests\b"
+    r"|\brate[\s\-_]?limit\b"
+    r"|\btoo\s+many\s+requests\b",
+    re.IGNORECASE,
+)
+
+_5XX_RE = re.compile(
+    r"\bHTTP[\s/][\d.]*\s*(?:500|502|503|504)\b"
+    r"|\bstatus(?:\s+code)?\s*[:=]?\s*(?:500|502|503|504)\b"
+    r"|\b(?:500|502|503|504)\s+"
+    r"(?:Internal\s+Server\s+Error|Bad\s+Gateway|"
+    r"Service\s+Unavailable|Gateway\s+Timeout)\b",
+    re.IGNORECASE,
+)
+
+# Keys the claude --output-format json envelope uses to signal errors.
+_STRUCTURED_ERROR_KEYS = ("is_error", "error", "status_code", "error_type")
 
 
 class ClaudeAdapter(AdapterBase):
@@ -84,22 +124,29 @@ class ClaudeAdapter(AdapterBase):
                 )
         except TimeoutError:
             raise
+        except (ConnectionError, BrokenPipeError) as exc:
+            # Transient OS-level errors (peer reset, pipe closed). Surface as
+            # TransientError so the retry loop in base.run() backs off and
+            # tries again instead of burning the budget on the first attempt.
+            raise TransientError(
+                f"transient subprocess error (multimodal): {exc}"
+            ) from exc
         except Exception as exc:
             raise AdapterError(f"Failed to execute claude (multimodal): {exc}") from exc
 
         exit_code = proc.returncode
         duration_ms = int((time.monotonic() - start_time) * 1000)
 
-        if "429" in stderr or "rate limit" in stderr.lower():
-            exc = RateLimitError(f"Rate limit hit: {stderr.strip()}")
-            exc._result = AgentResult(
+        classified = self._classify_error(stderr, stdout, exit_code)
+        if classified is not None:
+            classified._result = AgentResult(  # type: ignore[attr-defined]
                 stdout=stdout,
                 stderr=stderr,
                 exit_code=exit_code,
                 usage=Usage(duration_ms=duration_ms),
                 retry_count=0,
             )
-            raise exc
+            raise classified
 
         if exit_code != 0:
             raise AdapterError(
@@ -169,36 +216,32 @@ class ClaudeAdapter(AdapterBase):
 
         except TimeoutError:
             raise
+        except (ConnectionError, BrokenPipeError) as exc:
+            # Transient OS-level errors (peer reset, pipe closed). Surface as
+            # TransientError so the retry loop in base.run() backs off and
+            # tries again instead of burning the budget on the first attempt.
+            raise TransientError(
+                f"transient subprocess error: {exc}"
+            ) from exc
         except Exception as exc:
             raise AdapterError(f"Failed to execute claude: {exc}") from exc
 
         exit_code = proc.returncode
         duration_ms = int((time.monotonic() - start_time) * 1000)
 
-        # Detect rate limit from stderr
-        if "429" in stderr or "rate limit" in stderr.lower():
-            exc = RateLimitError(f"Rate limit hit: {stderr.strip()}")
-            exc._result = AgentResult(
+        # T20 error classification: prefers structured JSON envelope, falls
+        # back to word-boundary substring matching on stderr. Returns
+        # RateLimitError / ServerError / None — never raises on its own.
+        classified = self._classify_error(stderr, stdout, exit_code)
+        if classified is not None:
+            classified._result = AgentResult(  # type: ignore[attr-defined]
                 stdout=stdout,
                 stderr=stderr,
                 exit_code=exit_code,
                 usage=Usage(duration_ms=duration_ms),
                 retry_count=attempt,
             )
-            raise exc
-
-        # Detect server errors for retry
-        for code in self.RETRY_SERVER_ERROR_CODES:
-            if str(code) in stderr:
-                exc = RateLimitError(f"Server error {code}: {stderr.strip()}")
-                exc._result = AgentResult(
-                    stdout=stdout,
-                    stderr=stderr,
-                    exit_code=exit_code,
-                    usage=Usage(duration_ms=duration_ms),
-                    retry_count=attempt,
-                )
-                raise exc
+            raise classified
 
         if exit_code != 0:
             raise AdapterError(
@@ -295,3 +338,112 @@ class ClaudeAdapter(AdapterBase):
             total_tokens=raw_usage.get("total_tokens"),
             duration_ms=duration_ms,
         )
+
+    # ------------------------------------------------------------------
+    # Error classification (T20)
+    # ------------------------------------------------------------------
+
+    def _classify_error(
+        self,
+        stderr: str,
+        stdout: str,
+        exit_code: int,
+    ) -> Optional[AdapterError]:
+        """Classify subprocess output into a retryable error type.
+
+        Returns
+        -------
+        Optional[AdapterError]
+            - ``RateLimitError`` for 429 / rate-limit signals
+            - ``ServerError`` for 5xx upstream signals
+            - ``None`` if no retryable error is detected — caller should
+              fall through to the normal exit_code / JSON parse path.
+
+        Order of preference (T20):
+        1. **Structured JSON** envelope from ``--output-format json`` —
+           preferred because it carries a real ``status_code`` instead of
+           guesswork from text.
+        2. **Word-boundary substring** fallback on stderr — robust against
+           "429" or "500" appearing in paths, token counts, or line numbers
+           (the bug the old bare ``"429" in stderr`` matcher had).
+        """
+        structured = self._extract_structured_error(stdout)
+        if structured is not None:
+            classified = self._classify_from_structured(structured)
+            if classified is not None:
+                return classified
+
+        # Word-boundary substring fallback on stderr.
+        if _RATE_LIMIT_RE.search(stderr):
+            return RateLimitError(
+                f"rate-limit signal in stderr: {stderr.strip()[:200]}"
+            )
+        if _5XX_RE.search(stderr):
+            return ServerError(
+                f"5xx signal in stderr: {stderr.strip()[:200]}"
+            )
+
+        return None
+
+    def _classify_from_structured(self, data: dict) -> Optional[AdapterError]:
+        """Build a retryable error from a parsed JSON error envelope."""
+        status = data.get("status_code")
+        is_error = data.get("is_error", False)
+        error_text = str(data.get("error") or data.get("error_type") or "")
+
+        if not (is_error or error_text):
+            return None
+
+        # Numeric status code is the strongest signal.
+        if isinstance(status, int):
+            if status == 429 or (
+                400 <= status < 500 and _RATE_LIMIT_RE.search(error_text)
+            ):
+                return RateLimitError(
+                    f"rate limit from structured output: {error_text[:200]}"
+                )
+            if status in self.RETRY_SERVER_ERROR_CODES or 500 <= status < 600:
+                return ServerError(
+                    f"server error {status} from structured output: "
+                    f"{error_text[:200]}"
+                )
+            # Other 4xx are non-retryable — let the caller decide.
+            return None
+
+        # No numeric status; fall back to text matching.
+        if _RATE_LIMIT_RE.search(error_text) or "rate_limit" in error_text.lower():
+            return RateLimitError(
+                f"rate limit from structured output: {error_text[:200]}"
+            )
+        if _5XX_RE.search(error_text):
+            return ServerError(
+                f"5xx signal in structured error: {error_text[:200]}"
+            )
+        return None
+
+    def _extract_structured_error(self, stdout: str) -> Optional[dict]:
+        """Return the error-relevant fields of a JSON envelope, or None.
+
+        A "structured error envelope" is a JSON object containing at least
+        one of ``is_error / error / status_code / error_type``. Plain
+        success envelopes (``{"result": "...", "usage": {...}}``) return
+        None so the caller skips the structured-error branch.
+        """
+        text = stdout.strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            text = self._strip_code_fence(text)
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = self._extract_json(text)
+                if data is None:
+                    return None
+        if not isinstance(data, dict):
+            return None
+        if not any(k in data for k in _STRUCTURED_ERROR_KEYS):
+            return None
+        return data
