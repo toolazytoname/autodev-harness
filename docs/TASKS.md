@@ -226,7 +226,7 @@ Linux 用 `systemd --user` timer，缺失则退 `at`/cron；都没有则退 deta
 从头重跑。改为 写临时文件 + `os.replace()` 原子替换（同目录 rename）+ 可选 `fsync`；读到损坏时**报错**而非静默 None。
 **验收**：注入"写一半"故障后，旧 state 仍可读；损坏文件触发明确报错而非静默重跑。**坑点**：跨维护点都要走同一个原子写工具函数。
 
-### T18 [HIGH] resume 精确接续"半截的 task"  ⏳
+### T18 [HIGH] resume 精确接续"半截的 task"  ✅ 2026-07-07
 **内容**：三处让续跑无法接上：①`TaskStatus.IN_PROGRESS` 从不写盘（只更 Linear），崩溃时任务仍 pending，
 但 worktree `task/{id}` 已存在 → `create_worktree` 因分支已存在失败 → 任务被误打成 blocked；
 ②`write_task_queue:488-497` 序列化**漏了 `platform` 字段**，重写后 mobile/miniprogram 任务回落 web、丢专属 reviewer；
