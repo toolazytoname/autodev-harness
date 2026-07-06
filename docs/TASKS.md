@@ -260,7 +260,7 @@ merge+complete 构成单一可恢复事务；序列化补全 platform（并审�
 (B) 整套 budget 门面连同 `_instance` 一起删除，避免"假安全"。
 **验收**：A→撞顶真的暂停并可续；B→死代码清零、文档不再声称有预算保护。
 
-### T22 [HIGH] Python 主路径引入结构化日志  ⏳
+### T22 [HIGH] Python 主路径引入结构化日志  ✅ 2026-07-07
 **内容**：`harness/` 全目录零 `import logging`、仅 18 处裸 `print()`；`logs/harness.log` 只被 legacy bash 写。
 真正在跑的 Python pipeline 不落任何持久日志，无人值守失败时无排障轨迹。引入 `logging`，统一写 `logs/harness.log`，
 关键节点记 stage/task_id/iter/usage/耗时。**验收**：一次失败跑批后，日志能定位到 stage+task+iter。**注**：M4 无人值守续跑尤其依赖它排障。
