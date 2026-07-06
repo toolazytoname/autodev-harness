@@ -34,8 +34,11 @@ from harness.artifacts import (
     write_workflow_state,
 )
 from harness.inner_loop import EscalationError, InnerLoopError, LoopConfig, run_inner_loop
+from harness.logging_setup import get_logger
 from harness.router import ModelRouter
 from harness.score_card import extract_json_from_fenced
+
+_log = get_logger(__name__)
 
 if TYPE_CHECKING:
     from harness.linear_sync import LinearSync
@@ -865,9 +868,30 @@ class Pipeline:
 
         for phase in PIPELINE_PHASES[start_idx:]:
             self._save_state(phase, completed)
-            runners[phase]()
+            mode_str = (
+                self._config.mode.value
+                if hasattr(self._config.mode, "value")
+                else str(self._config.mode)
+            )
+            _log.info(
+                "phase_started",
+                extra={"stage": phase.value, "mode": mode_str},
+            )
+            try:
+                runners[phase]()
+            except Exception as exc:
+                _log.exception(
+                    "phase_failed",
+                    extra={
+                        "stage": phase.value,
+                        "mode": mode_str,
+                        "error": str(exc),
+                    },
+                )
+                raise
             completed = completed + [phase]
             self._save_state(phase, completed)
+            _log.info("phase_complete", extra={"stage": phase.value})
 
         self._log("Pipeline complete ✅")
 

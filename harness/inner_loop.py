@@ -32,6 +32,9 @@ from harness.artifacts import (
     read_task_queue,
     write_task_queue,
 )
+from harness.logging_setup import get_logger
+
+_log = get_logger(__name__)
 from harness.router import ModelRouter, ModelSpec
 from harness.score_card import (
     ScoreCard,
@@ -886,6 +889,16 @@ def run_inner_loop(
     # then mis-routes the task through the fresh-work path and
     # ``create_worktree`` fails because the branch is taken.
     mark_task_in_progress(project_dir, task_id)
+    _log.info(
+        "task_started",
+        extra={
+            "stage": "develop",
+            "task_id": task_id,
+            "kind": task_kind,
+            "platform": platform,
+            "max_iterations": config.max_iterations,
+        },
+    )
 
     # ---------------------------------------------------------------------------
     # Create worktree for this task
@@ -974,6 +987,16 @@ def run_inner_loop(
             # Step 3: Gate check
             # -------------------------------------------------------------------
             passed, reason = check_gate(cards, pass_threshold=config.pass_threshold)
+            _log.info(
+                "gate_evaluated",
+                extra={
+                    "stage": "develop",
+                    "task_id": task_id,
+                    "iter": iter_num,
+                    "passed": passed,
+                    "reason": reason,
+                },
+            )
 
             if passed:
                 # Gate passed — T18 transaction order:
@@ -996,11 +1019,28 @@ def run_inner_loop(
                     # Merge conflict — escalate with the diff between
                     # on-disk state (COMPLETED) and actual repo state
                     # (still on the task branch).
+                    _log.error(
+                        "merge_failed",
+                        extra={
+                            "stage": "develop",
+                            "task_id": task_id,
+                            "iter": iter_num,
+                            "error": str(exc),
+                        },
+                    )
                     write_escalation_report(
                         project_dir, task_id, iter_num, all_cards, spec_text
                     )
                     raise EscalationError(task_id, iter_num, all_cards) from exc
 
+                _log.info(
+                    "merge_complete",
+                    extra={
+                        "stage": "develop",
+                        "task_id": task_id,
+                        "iter": iter_num,
+                    },
+                )
                 return all_cards
 
             # -------------------------------------------------------------------
