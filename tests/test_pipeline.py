@@ -440,7 +440,7 @@ class TestPipelineRun:
     def _adapter_for_full_run(self):
         """Adapter returning phase-appropriate output based on the prompt."""
 
-        def run(prompt, *, model, cwd, timeout):
+        def run(prompt, *, model, cwd, timeout, **kwargs):
             if "# taskgen agent prompt" in prompt:
                 return _agent_result(TASK_QUEUE_JSON)
             if "# ui-design agent prompt" in prompt:

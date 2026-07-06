@@ -38,6 +38,8 @@ class CodexAdapter(AdapterBase):
         cwd: Path,
         timeout: int,
         attempt: int,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> AgentResult:
         # TODO: implement once codex CLI interface is known
         raise NotImplementedError(

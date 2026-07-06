@@ -348,6 +348,17 @@ class Pipeline:
             return ""
         return _read_bundle_skill(self._skills_bundle_dir, "styles", module_name)
 
+    def _api_key_for(self, tier: str) -> Optional[str]:
+        """Resolve the per-tier API key from the environment.
+
+        T19 — different backends (Anthropic, MiniMax, …) issue their own
+        keys; piping the wrong one to a worker call leaks the credential
+        or hits the wrong account. We only read the env (never mutate it),
+        and return ``None`` when nothing is configured so the subprocess
+        inherits the parent process's default key.
+        """
+        return os.environ.get(f"AUTODEV_API_KEY_{tier.upper()}")
+
     def _call_agent(self, phase: Phase, input_text: str) -> AgentResult:
         """Run the agent for a phase through the router-selected model."""
         stage = PHASE_STAGES[phase]
@@ -360,6 +371,9 @@ class Pipeline:
             model=spec.model,
             cwd=self._config.project_dir,
             timeout=PHASE_TIMEOUT_SECONDS,
+            base_url=spec.base_url,
+            api_key=self._api_key_for(spec.tier),
+            fallback_model=spec.fallback,
         )
         self._router.record(stage, result.usage)
         return result
@@ -397,6 +411,9 @@ class Pipeline:
             model=spec.model,
             cwd=self._config.project_dir,
             timeout=PHASE_TIMEOUT_SECONDS,
+            base_url=spec.base_url,
+            api_key=self._api_key_for(spec.tier),
+            fallback_model=spec.fallback,
         )
         self._router.record(stage, result.usage)
         return result

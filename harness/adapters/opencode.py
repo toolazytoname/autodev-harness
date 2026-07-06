@@ -39,6 +39,8 @@ class OpenCodeAdapter(AdapterBase):
         cwd: Path,
         timeout: int,
         attempt: int,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> AgentResult:
         # TODO: implement once opencode CLI interface is known
         raise NotImplementedError(

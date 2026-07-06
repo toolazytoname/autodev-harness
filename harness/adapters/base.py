@@ -167,6 +167,9 @@ class AdapterBase(ABC):
         model: str,
         cwd: Path | str | None = None,
         timeout: int = 120,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        fallback_model: Optional[str] = None,
     ) -> AgentResult:
         """Run the agent with the given prompt.
 
@@ -181,6 +184,20 @@ class AdapterBase(ABC):
         timeout
             Per-attempt timeout in seconds. After each retry the full timeout
             is available again (timeout is per attempt, not total).
+        base_url
+            T19 — API base URL. When provided, the adapter exports
+            ``ANTHROPIC_BASE_URL`` into the subprocess environment so worker
+            calls hit the third-party endpoint instead of the default.
+        api_key
+            T19 — API key for this run. Injected as ``ANTHROPIC_API_KEY`` so
+            different tiers can target different backends without leaking
+            the wrong credential.
+        fallback_model
+            T19 — model to use when ``model`` exhausts all retries. Wired in
+            so ``spec.fallback`` (currently only displayed by
+            ``router.pretty_print``) actually does something. The fallback
+            gets its own retry budget. Quota-specific downgrade logic is
+            T16c and sits on top of this generic fallback.
 
         Returns
         -------
@@ -190,7 +207,8 @@ class AdapterBase(ABC):
         Raises
         ------
         AdapterError
-            If all retries are exhausted or an unexpected error occurs.
+            If all retries (primary + fallback) are exhausted or an
+            unexpected error occurs.
         TimeoutError
             If the timeout is exceeded on every attempt.
         """
@@ -198,7 +216,56 @@ class AdapterBase(ABC):
             cwd = Path(cwd)
         cwd = cwd or Path.cwd()
 
+        # First attempt: primary model.
+        try:
+            return self._run_with_retry(
+                prompt=prompt,
+                model=model,
+                cwd=cwd,
+                timeout=timeout,
+                base_url=base_url,
+                api_key=api_key,
+            )
+        except RETRYABLE_EXCEPTIONS as primary_exc:
+            # Primary exhausted all retries. If a fallback model is wired
+            # in, give it one full retry budget. Anything else (timeout,
+            # hard failure) propagates unchanged.
+            if fallback_model and fallback_model != model:
+                return self._run_with_retry(
+                    prompt=prompt,
+                    model=fallback_model,
+                    cwd=cwd,
+                    timeout=timeout,
+                    base_url=base_url,
+                    api_key=api_key,
+                )
+            raise
+
+    def _run_with_retry(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        cwd: Path,
+        timeout: int,
+        base_url: Optional[str],
+        api_key: Optional[str],
+    ) -> AgentResult:
+        """Internal: run a single ``model`` with the standard retry loop.
+
+        Extracted from :meth:`run` so the fallback path can reuse the same
+        retry/timeout/classification machinery without duplicating it.
+
+        On retry exhaustion we re-raise the *original* retryable exception
+        (RateLimitError / ServerError / TransientError) instead of wrapping
+        it in ``AdapterError``. The outer ``run()`` needs the typed
+        exception to decide whether to fall back to the configured
+        ``fallback_model``; a bare ``AdapterError`` would defeat that
+        branching. ``TimeoutError`` and unexpected errors still propagate
+        immediately as before.
+        """
         attempt = 0
+        last_retryable: BaseException | None = None
         last_result: AgentResult | None = None
 
         while attempt < self.RETRY_MAX_ATTEMPTS:
@@ -209,14 +276,17 @@ class AdapterBase(ABC):
                     cwd=cwd,
                     timeout=timeout,
                     attempt=attempt,
+                    base_url=base_url,
+                    api_key=api_key,
                 )
                 # Success — return immediately
                 return result
 
             except RETRYABLE_EXCEPTIONS as exc:
                 # RateLimit / ServerError / TransientError — all back off
-                # and retry. The final AdapterError raised after exhaustion
-                # keeps the last attempt's result via exc._result.
+                # and retry. Hold the original exception so we can re-raise
+                # it on exhaustion (the fallback layer branches on type).
+                last_retryable = exc
                 last_result = getattr(exc, "_result", None)
                 delay = self._backoff_delay(attempt)
                 attempt += 1
@@ -232,14 +302,21 @@ class AdapterBase(ABC):
                 # Unexpected error — do not retry, propagate immediately
                 raise AdapterError(f"Unexpected adapter error: {exc}") from exc
 
-        # All retries exhausted — promote last error to AdapterError
+        # All retries exhausted. Re-raise the original retryable exception
+        # (preserved with its ``_result`` attribute) so callers / the
+        # fallback layer can introspect. Fall back to AdapterError when
+        # no retryable was ever captured.
+        if last_retryable is not None:
+            raise last_retryable
         if last_result is not None:
             raise AdapterError(
-                f"All {self.RETRY_MAX_ATTEMPTS} attempts failed. Last error: "
-                f"exit={last_result.exit_code}, stderr={last_result.stderr!r}"
+                f"All {self.RETRY_MAX_ATTEMPTS} attempts failed for model '{model}'. "
+                f"Last error: exit={last_result.exit_code}, "
+                f"stderr={last_result.stderr!r}"
             )
         raise AdapterError(
-            f"All {self.RETRY_MAX_ATTEMPTS} attempts failed without a usable result"
+            f"All {self.RETRY_MAX_ATTEMPTS} attempts failed for model '{model}' "
+            f"without a usable result"
         )
 
     def _backoff_delay(self, attempt: int) -> float:
@@ -257,6 +334,9 @@ class AdapterBase(ABC):
         model: str,
         cwd: Path | str | None = None,
         timeout: int = 120,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        fallback_model: Optional[str] = None,
     ) -> AgentResult:
         """Run the agent with multimodal attachments (images / PDFs).
 
@@ -278,6 +358,12 @@ class AdapterBase(ABC):
             Working directory (default: cwd).
         timeout
             Per-attempt timeout in seconds.
+        base_url
+            T19 — forwarded to the subprocess env as ``ANTHROPIC_BASE_URL``.
+        api_key
+            T19 — forwarded to the subprocess env as ``ANTHROPIC_API_KEY``.
+        fallback_model
+            T19 — model to use when ``model`` exhausts retries.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support multimodal attachments. "
@@ -294,6 +380,8 @@ class AdapterBase(ABC):
         cwd: Path,
         timeout: int,
         attempt: int,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> AgentResult:
         """Execute the agent run. Override in subclasses.
 
@@ -308,5 +396,10 @@ class AdapterBase(ABC):
         All retryable exceptions may carry a ``_result: AgentResult``
         attribute that ``run()`` will surface via the final
         ``AdapterError`` raised after retry exhaustion.
+
+        T19 — ``base_url`` and ``api_key`` must reach the underlying CLI's
+        subprocess via ``Popen(env=...)`` so third-party workers (e.g.
+        MiniMax) are not silently routed at the default endpoint and so
+        per-tier credentials don't leak across backends.
         """
         ...

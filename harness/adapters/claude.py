@@ -33,6 +33,38 @@ from harness.adapters.base import (
 
 
 # ---------------------------------------------------------------------------
+# Env construction (T19)
+# ---------------------------------------------------------------------------
+
+
+def build_subprocess_env(
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Optional[dict[str, str]]:
+    """Build the env dict for the ``claude`` subprocess.
+
+    T19 — third-party worker calls must reach the configured endpoint and
+    use the per-tier credential. We never mutate the process-global
+    ``os.environ``; instead we hand the subprocess a derived copy so the
+    rest of the harness keeps reading the original env.
+
+    Returns ``None`` when neither ``base_url`` nor ``api_key`` is supplied,
+    which lets ``subprocess.Popen`` fall back to inheriting the parent
+    process env (no unnecessary allocation / no surprise overrides).
+    """
+    if not base_url and not api_key:
+        return None
+    import os
+
+    env = os.environ.copy()
+    if base_url:
+        env["ANTHROPIC_BASE_URL"] = base_url
+    if api_key:
+        env["ANTHROPIC_API_KEY"] = api_key
+    return env
+
+
+# ---------------------------------------------------------------------------
 # Error classification patterns (T20)
 # ---------------------------------------------------------------------------
 
@@ -76,6 +108,8 @@ class ClaudeAdapter(AdapterBase):
         model: str,
         cwd: Path | str | None = None,
         timeout: int = 120,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> AgentResult:
         """Run claude -p with image/PDF attachments.
 
@@ -85,6 +119,10 @@ class ClaudeAdapter(AdapterBase):
         route them through the same path the CLI uses for screenshots,
         which keeps the JSON-mode behaviour: stdout is the JSON envelope
         with ``result`` and ``usage``.
+
+        T19 — ``base_url`` and ``api_key`` are forwarded to the subprocess
+        env via ``build_subprocess_env`` so visual reviewer calls also
+        hit the right endpoint with the right credential.
         """
         from harness.adapters.base import AdapterError  # local import to avoid cycles
 
@@ -100,6 +138,8 @@ class ClaudeAdapter(AdapterBase):
         cmd = ["claude", "-p", "--model", model, "--output-format", "json"]
         cmd.extend(str(p) for p in attachments)
 
+        env = build_subprocess_env(base_url=base_url, api_key=api_key)
+
         start_time = time.monotonic()
         try:
             proc = subprocess.Popen(
@@ -108,6 +148,7 @@ class ClaudeAdapter(AdapterBase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=cwd,
+                env=env,
                 text=True,
                 encoding="utf-8",
             )
@@ -187,9 +228,16 @@ class ClaudeAdapter(AdapterBase):
         cwd: Path,
         timeout: int,
         attempt: int,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> AgentResult:
         """Execute a single claude -p invocation."""
         cmd = self._build_cmd(prompt, model, cwd)
+
+        # T19 — propagate base_url / api_key to the subprocess env so
+        # worker-tier calls actually reach the configured endpoint and use
+        # the right credential. None of this mutates the parent process env.
+        env = build_subprocess_env(base_url=base_url, api_key=api_key)
 
         start_time = time.monotonic()
 
@@ -200,6 +248,7 @@ class ClaudeAdapter(AdapterBase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=cwd,
+                env=env,
                 text=True,
                 encoding="utf-8",
             )

@@ -410,7 +410,7 @@ class TestBugInjectionLoop:
         ]
         call_idx = [0]  # mutable container for closure
 
-        def mock_run(prompt, *, model, cwd, timeout):
+        def mock_run(prompt, *, model, cwd, timeout, **kwargs):
             idx = call_idx[0]
             call_idx[0] = idx + 1
             response = call_list[idx]

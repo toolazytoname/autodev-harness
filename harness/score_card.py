@@ -1,8 +1,12 @@
 """Score card schema, validation, and persistence.
 
-Per MASTER-PLAN §5.2 — score cards are structured JSON with schema validation.
-On validation failure the harness retries the same model (max 2 times),
-then switches to the fallback model for that tier.
+Per MASTER-PLAN §5.2 — score cards are structured JSON with schema
+validation. On validation failure ``parse_score_card_with_retry`` retries
+parsing up to ``max_retries`` times (caller is expected to drive the
+repair by re-invoking the same LLM with the parse error in the prompt).
+The adapter-level ``spec.fallback`` switchover is wired in by T19 and
+kicks in at the *retry* layer above this module — see
+``AdapterBase.run`` and ``harness.adapters.claude.build_subprocess_env``.
 """
 
 from __future__ import annotations

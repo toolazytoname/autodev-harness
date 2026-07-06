@@ -12,6 +12,7 @@ passing, the task is escalated for architect arbitration.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import textwrap
 import threading
@@ -209,8 +210,13 @@ def run_generator(
     The generator prompt includes the spec and any feedback from previous
     iterations (blockers + suggestions).  Reviewer transcripts are NOT
     included — only structured feedback.
+
+    T19 — propagates ``spec.base_url`` and the per-tier API key (read from
+    ``AUTODEV_API_KEY_<TIER>``) to the subprocess so worker-tier calls
+    reach the configured third-party endpoint instead of the default.
     """
     spec = router.resolve("generate")
+    api_key = os.environ.get(f"AUTODEV_API_KEY_{spec.tier.upper()}")
 
     # Build the prompt with feedback from previous iterations
     feedback_block = ""
@@ -268,6 +274,9 @@ def run_generator(
         model=spec.model,
         cwd=worktree_path,
         timeout=300,  # 5 min for generation
+        base_url=spec.base_url,
+        api_key=api_key,
+        fallback_model=spec.fallback,
     )
 
     return GeneratorOutput(
@@ -429,11 +438,19 @@ def run_single_reviewer(
     )
 
     try:
+        # T19 — propagate the resolved spec's base_url/api_key/fallback so
+        # reviewer calls also ride the third-party chain correctly.
+        review_api_key = os.environ.get(
+            f"AUTODEV_API_KEY_{spec.tier.upper()}"
+        )
         result = adapter.run(
             prompt,
             model=spec.model,
             cwd=worktree_path,
             timeout=180,  # 3 min per reviewer
+            base_url=spec.base_url,
+            api_key=review_api_key,
+            fallback_model=spec.fallback,
         )
         raw_output = result.stdout
         usage: Usage = result.usage
