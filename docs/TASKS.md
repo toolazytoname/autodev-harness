@@ -305,12 +305,21 @@ queue/worktree/generator/diff/截图/并行评审/记账/gate/merge/升级全混
 `reviewer_runner.py` 1 个 + `worktree.py` 1 个 + `pipeline.py:phase_develop` 略超
 （前两个 52-55 行，是 T18 幂等 + 线程池布线的天然复杂度；最后一个是 T24 范围外的旧函数）。
 
-### T25 [MEDIUM] adapter DRY + 多模态走统一重试 + JSON 解析优化  ⏳
+### T25 [MEDIUM] adapter DRY + 多模态走统一重试 + JSON 解析优化  ✅ 2026-07-07
 **内容**：`run_with_attachments`(claude.py:31-117) 与 `_execute`(135-218) 大段重复且已漂移（多模态**漏了 5xx 重试**、
 且绕过 `run()` 的重试外壳零重试）；`_extract_json`(273-287) 逐字符 `json.loads` O(n²)、不支持数组；
 解析彻底失败时静默返回原文而不抛已定义的 `InvalidResponseError`；结果字段 `or` 链会吞合法假值；附件 argv 缺 `--` 终止符。
 改：抽 `_run_subprocess(cmd,...)` 公共私有方法、两路复用；`json.JSONDecoder().raw_decode` 一次 O(n)；解析失败抛 `InvalidResponseError`；
 附件前插 `--`。**验收**：多模态与文本路径共用同一重试/错误映射；大 JSON 解析不卡。
+**完成记录**：抽出 `_run_subprocess` + `_post_subprocess` 双私有方法，`_execute` /
+`run_with_attachments` 各自瘦身到 13–14 行；多模态走 `_run_cmd_with_retry` +
+`_attempt`（指数退避 + fallback_model），不再零重试；argv `--` 前置。
+`_loads_json_envelope` 用 `json.JSONDecoder().raw_decode` 一次 O(n) 扫描，
+`_extract_json` 委托并兼容顶层数组；`_parse_json_output` 解析失败抛
+`InvalidResponseError`（加入 `NON_RETRYABLE_EXCEPTIONS`，原样上抛），
+结果字段改为显式 `in` / `is not None` 检查保留空串。13 新增 + 1 改写
+在 `tests/test_t25_adapter_dry.py` / `test_adapters.py`，全量 503 passed /
+2 skipped，覆盖率 84%；claude.py 711 行、18 方法均 ≤50 行。
 
 ### T26 [MEDIUM] 配置健壮性 + 消除耦合/魔数  ⏳
 **内容**：`models.yaml`/`slop_rules.yaml` 缺加载期 schema 校验（缺字段静默默认或裸 KeyError，对比 reviewers.yaml 已用 pydantic）；
