@@ -110,6 +110,12 @@ _LABEL = re.compile(r"^(?P<label>[A-Za-z][A-Za-z0-9_\-]*)(?:\s*[-—:]\s*(?P<not
 _PATH = re.compile(r"^(?P<path>/[A-Za-z0-9_\-./]*)(?:\s*[-—:]\s*(?P<note>.+))?$")
 _PAGE_LINE = _PATH  # kept as alias for backward compatibility
 
+# T26 — cap the page list when we fall back to scanning the whole spec
+# (no ``## pages`` heading). The cap exists to bound screenshot capture
+# time on pathologically long specs; 6 covers the 4-direction baseline
+# plus a couple of "hero / pricing" extras.
+FALLBACK_PAGE_LIMIT: int = 6
+
 
 def _parse_bullet_body(body: str):
     """Parse one bullet body (after the leading ``- ``) into (label, note)."""
@@ -168,7 +174,7 @@ def extract_pages_from_spec(spec_text: str) -> list[tuple[str, str]]:
     if out:
         return out
     if fallback:
-        return fallback[:6]  # cap to keep capture time bounded
+        return fallback[:FALLBACK_PAGE_LIMIT]
     return [("/", "")]
 
 

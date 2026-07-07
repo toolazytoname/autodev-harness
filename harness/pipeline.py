@@ -89,28 +89,45 @@ PIPELINE_PHASES: list[Phase] = [
     Phase.DEVELOP,
 ]
 
-# Artifact name each phase produces (develop produces commits, not an artifact)
-PHASE_ARTIFACTS: dict[Phase, str] = {
-    Phase.RESEARCH: "001-research-report",
-    Phase.PLAN: "002-plan",
-    Phase.UI: "006-ui-spec",
-    Phase.TASKS: "003-task-queue",
-}
 
-# Router stage name per phase
-PHASE_STAGES: dict[Phase, str] = {
-    Phase.RESEARCH: "research",
-    Phase.PLAN: "plan",
-    Phase.UI: "ui_design",
-    Phase.TASKS: "taskgen",
-}
+# T26 — ``PHASE_ARTIFACTS`` / ``PHASE_STAGES`` / ``PHASE_AGENTS`` used to
+# be three parallel dicts in this module; adding a phase meant editing
+# all three. Consolidate into a single ``PHASE_SPECS`` table keyed by
+# ``Phase``. ``DEVELOP`` is not a model-driven phase so it is omitted
+# (its "artifact" is the set of commits, not a single markdown file).
 
-# Agent prompt file per phase (relative to agents/)
-PHASE_AGENTS: dict[Phase, str] = {
-    Phase.RESEARCH: "researcher",
-    Phase.PLAN: "planner",
-    Phase.UI: "ui-design",
-    Phase.TASKS: "taskgen",
+
+@dataclass(frozen=True)
+class PhaseSpec:
+    """One pipeline phase's metadata.
+
+    Attributes
+    ----------
+    artifact
+        Filename of the artifact this phase produces under
+        ``artifacts/`` (no extension). ``DEVELOP`` is ``None`` because
+        it commits code rather than emitting a single document.
+    stage
+        Router stage name used to resolve the model tier for this
+        phase. ``DEVELOP`` is ``None`` because it dispatches per-task
+        through the inner loop.
+    agent
+        Markdown prompt file (relative to ``agents/``) that drives the
+        phase. ``DEVELOP`` is ``None`` because there is no single
+        "develop" prompt.
+    """
+
+    artifact: Optional[str]
+    stage: Optional[str]
+    agent: Optional[str]
+
+
+PHASE_SPECS: dict[Phase, PhaseSpec] = {
+    Phase.RESEARCH: PhaseSpec(artifact="001-research-report", stage="research", agent="researcher"),
+    Phase.PLAN: PhaseSpec(artifact="002-plan", stage="plan", agent="planner"),
+    Phase.UI: PhaseSpec(artifact="006-ui-spec", stage="ui_design", agent="ui-design"),
+    Phase.TASKS: PhaseSpec(artifact="003-task-queue", stage="taskgen", agent="taskgen"),
+    Phase.DEVELOP: PhaseSpec(artifact=None, stage=None, agent=None),
 }
 
 # Aesthetic directions the ui_design phase generates (T08 step 4).
@@ -288,9 +305,17 @@ class Pipeline:
 
     def _call_agent(self, phase: Phase, input_text: str) -> AgentResult:
         """Run the agent for a phase through the router-selected model."""
-        stage = PHASE_STAGES[phase]
+        phase_spec = PHASE_SPECS[phase]
+        # DEVELOP is dispatched per-task through the inner loop; no
+        # model-driven call exists for it here.
+        if phase_spec.stage is None or phase_spec.agent is None:
+            raise PipelineError(
+                f"Phase '{phase.name}' is not a model-driven phase and "
+                "has no agent prompt to call"
+            )
+        stage = phase_spec.stage
         spec = self._router.resolve(stage)
-        agent_prompt = _read_agent_prompt(self._agents_dir, PHASE_AGENTS[phase])
+        agent_prompt = _read_agent_prompt(self._agents_dir, phase_spec.agent)
         prompt = _build_prompt(agent_prompt, input_text)
 
         result = self._adapter.run(
@@ -313,9 +338,12 @@ class Pipeline:
         user_feedback: str = "",
     ) -> AgentResult:
         """Run the ui_design agent for one specific aesthetic direction."""
-        stage = PHASE_STAGES[Phase.UI]
+        ui_spec = PHASE_SPECS[Phase.UI]
+        if ui_spec.stage is None or ui_spec.agent is None:
+            raise PipelineError("UI phase spec is missing stage/agent metadata")
+        stage = ui_spec.stage
         spec = self._router.resolve(stage)
-        agent_prompt = _read_agent_prompt(self._agents_dir, PHASE_AGENTS[Phase.UI])
+        agent_prompt = _read_agent_prompt(self._agents_dir, ui_spec.agent)
         three_piece = self._load_three_piece_baseline()
         style_module = self._load_style_module(direction["module"])
 
@@ -744,7 +772,7 @@ class Pipeline:
             return Phase.DEVELOP
 
         for phase in PIPELINE_PHASES:
-            artifact = PHASE_ARTIFACTS.get(phase)
+            artifact = PHASE_SPECS[phase].artifact
             if artifact is None:
                 return phase  # develop
             if not get_artifact_path(self._config.project_dir, artifact).exists():

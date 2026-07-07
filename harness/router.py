@@ -31,6 +31,41 @@ import yaml
 # ---------------------------------------------------------------------------
 
 
+class TierConfig(pydantic.BaseModel):
+    """One tier's configuration — model + optional base_url + fallback."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    model: str
+    base_url: Optional[str] = None
+    fallback: Optional[str] = None
+
+
+class BudgetConfig(pydantic.BaseModel):
+    """Per-tier budget thresholds (percent of the configured cap)."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    warn_at_percent: int = 80
+    stop_at_percent: int = 100
+
+
+class ModelsConfig(pydantic.BaseModel):
+    """Top-level models.yaml schema.
+
+    T26 — used to be a raw dict; missing ``model`` in a tier would crash
+    deep in ``ModelRouter.__init__`` (``KeyError: 'model'``) and bad
+    budget entries silently defaulted. Validation now runs at load time
+    so misconfiguration fails fast with a clear ``ValidationError``.
+    """
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    tiers: dict[str, TierConfig]
+    assignments: dict[str, str]
+    budget: BudgetConfig = pydantic.Field(default_factory=BudgetConfig)
+
+
 class ModelSpec(pydantic.BaseModel):
     """Resolved model specification for a stage.
 
@@ -122,28 +157,27 @@ class ModelRouter:
             config_path = harness_root / "config" / "models.yaml"
 
         self._config_path = Path(config_path)
-        self._raw: dict = self._load_config()
+        self._config: ModelsConfig = self._load_config()
 
-        # Build stage → tier lookup (flattened)
-        self._assignments: dict[str, str] = self._raw.get("assignments", {})
-
-        # Per-tier spec cache
-        self._tier_specs: dict[str, ModelSpec] = {}
-        for tier_name, tier_cfg in self._raw.get("tiers", {}).items():
-            self._tier_specs[tier_name] = ModelSpec(
-                model=tier_cfg["model"],
+        # Flatten validated tier specs for fast lookup.
+        self._tier_specs: dict[str, ModelSpec] = {
+            tier_name: ModelSpec(
+                model=spec.model,
                 tier=tier_name,
-                base_url=tier_cfg.get("base_url"),
-                fallback=tier_cfg.get("fallback"),
+                base_url=spec.base_url,
+                fallback=spec.fallback,
             )
+            for tier_name, spec in self._config.tiers.items()
+        }
+
+        self._assignments: dict[str, str] = dict(self._config.assignments)
 
         # Budget tracking
         self._budgets: dict[str, _TierBudget] = {
             tier: _TierBudget() for tier in self._tier_specs
         }
-        budget_cfg = self._raw.get("budget", {})
-        self._warn_at: float = budget_cfg.get("warn_at_percent", 80) / 100.0
-        self._stop_at: float = budget_cfg.get("stop_at_percent", 100) / 100.0
+        self._warn_at: float = self._config.budget.warn_at_percent / 100.0
+        self._stop_at: float = self._config.budget.stop_at_percent / 100.0
 
     # ---- public API ----
 
@@ -240,14 +274,15 @@ class ModelRouter:
 
     # ---- private helpers ----
 
-    def _load_config(self) -> dict:
+    def _load_config(self) -> ModelsConfig:
         if not self._config_path.exists():
             raise FileNotFoundError(
                 f"Model config not found: {self._config_path}. "
                 "Check that config/models.yaml exists."
             )
         with self._config_path.open() as fh:
-            return yaml.safe_load(fh)
+            raw = yaml.safe_load(fh)
+        return ModelsConfig.model_validate(raw)
 
     def _get_tier(self, stage: str) -> str:
         if stage not in self._assignments:

@@ -251,16 +251,18 @@ class UIPhase:
         """Run the ui_design agent for one specific aesthetic direction."""
         from harness.artifacts import Phase
         from harness.pipeline import (
-            PHASE_AGENTS,
-            PHASE_STAGES,
+            PHASE_SPECS,
             PHASE_TIMEOUT_SECONDS,
             _build_ui_prompt,
             _read_agent_prompt,
         )
 
-        stage = PHASE_STAGES[Phase.UI]
+        ui_spec = PHASE_SPECS[Phase.UI]
+        if ui_spec.stage is None or ui_spec.agent is None:
+            raise RuntimeError("UI phase spec is missing stage/agent metadata")
+        stage = ui_spec.stage
         spec = self._p._router.resolve(stage)
-        agent_prompt = _read_agent_prompt(self._p._agents_dir, PHASE_AGENTS[Phase.UI])
+        agent_prompt = _read_agent_prompt(self._p._agents_dir, ui_spec.agent)
         three_piece = self._p._load_three_piece_baseline()
         style_module = self._p._load_style_module(direction["module"])
 

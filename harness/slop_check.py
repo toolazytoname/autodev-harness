@@ -25,9 +25,12 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Literal, Optional
 
+import pydantic
 import yaml
+
+Severity = Literal["blocker", "warn"]
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +103,37 @@ BUILTIN_RULES: list[dict] = [
 
 
 # ---------------------------------------------------------------------------
+# Pydantic schema (T26)
+# ---------------------------------------------------------------------------
+
+
+class SlopRule(pydantic.BaseModel):
+    """One slop rule.
+
+    T26 — was previously a raw dict with string fields; severity was
+    typo-tolerant (any value passed through to a regex that never
+    matched), and ``patterns=[]`` produced a useless no-op rule that
+    nobody noticed until it landed in CI. Validation now requires
+    a known severity and at least one pattern.
+    """
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    id: str
+    severity: Severity
+    description: str
+    patterns: list[str] = pydantic.Field(min_length=1)
+
+
+class SlopConfig(pydantic.BaseModel):
+    """Top-level slop_rules.yaml schema."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    rules: list[SlopRule] = pydantic.Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -151,10 +185,22 @@ class ValidationResult:
 
 
 def load_rules(yaml_path: Optional[Path] = None) -> list[dict]:
-    """Load rules from YAML or fall back to the built-in defaults."""
+    """Load rules from YAML or fall back to the built-in defaults.
+
+    T26 — the YAML is parsed through :class:`SlopConfig` so bad
+    severities, empty patterns, or missing required fields surface as a
+    ``ValidationError`` at load time instead of as a silently misfiring
+    rule at scan time.
+    """
     if yaml_path is None or not Path(yaml_path).exists():
         return BUILTIN_RULES
-    return yaml.safe_load(Path(yaml_path).read_text())["rules"]
+    raw = yaml.safe_load(Path(yaml_path).read_text())
+    if not isinstance(raw, dict) or "rules" not in raw:
+        raise ValueError(
+            f"slop rules YAML must be a mapping with a 'rules' key, got: {raw!r}"
+        )
+    cfg = SlopConfig.model_validate(raw)
+    return [rule.model_dump() for rule in cfg.rules]
 
 
 class SlopValidator:

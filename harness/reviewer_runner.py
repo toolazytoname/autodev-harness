@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
-from harness.adapters.base import AdapterBase, Usage
+from harness.adapters.base import AdapterBase, AdapterError, Usage
 from harness.artifacts import ensure_dir
 from harness.router import ModelRouter
 from harness.score_card import (
@@ -32,6 +32,17 @@ from harness.score_card import (
     parse_score_card,
     save_score_card,
 )
+
+
+# ---------------------------------------------------------------------------
+# Named constants (T26 — replace bare magic numbers / literals)
+# ---------------------------------------------------------------------------
+
+# Default dev-server URL the visual reviewer targets when no override is
+# supplied via AUTODEV_VISUAL_BASE_URL. Hoisted to a named constant so
+# the port (``8765``) is searchable and configurable from one place.
+DEFAULT_VISUAL_BASE_URL: str = "http://127.0.0.1:8765"
+AUTODEV_VISUAL_BASE_URL_ENV: str = "AUTODEV_VISUAL_BASE_URL"
 
 
 # 3-minute per-reviewer ceiling. Reviewer prompts are prompt-only
@@ -329,7 +340,7 @@ def capture_ui_screenshots(
     )
 
     base_url = base_url or os.environ.get(
-        "AUTODEV_VISUAL_BASE_URL", "http://127.0.0.1:8765"
+        AUTODEV_VISUAL_BASE_URL_ENV, DEFAULT_VISUAL_BASE_URL
     )
     pages = extract_pages_from_spec(spec_text)
     out_dir = screenshots_dir_for(project_dir, task_id)
@@ -378,6 +389,18 @@ def run_reviewers_parallel(
     cards: list[ScoreCard] = []
     usages: list[Usage] = []
     lock = threading.Lock()
+
+    # T26 — fail fast on an empty reviewer list instead of silently
+    # passing through ThreadPoolExecutor with max_workers=1 and zero
+    # actual review work. The legacy behaviour would let a
+    # misconfigured task kind sneak through every gate and burn an
+    # iteration without any quality check.
+    if not reviewer_names:
+        raise AdapterError(
+            "run_reviewers_parallel called with no reviewers — "
+            "check ReviewerAssembly.get_reviewer_names() for this "
+            "task kind / platform"
+        )
 
     def _record(card: ScoreCard, usage: Usage) -> None:
         with lock:

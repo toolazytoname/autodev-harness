@@ -117,6 +117,18 @@ class ReviewerAssembly:
         return resolved
 
     @property
+    def agents_dir(self) -> Path:
+        """Directory containing reviewer prompt markdown files.
+
+        T26 — previously exposed only as the private ``_agents_dir``.
+        Callers (``inner_loop``) had to reach into a private attribute
+        which silently broke any future refactor that renamed or
+        moved the field. Public property now keeps the private one as
+        the storage backing for backwards-compatible internal use.
+        """
+        return self._agents_dir
+
+    @property
     def all_reviewer_names(self) -> set[str]:
         """Return every reviewer name that appears in any configured list."""
         names: set[str] = set()

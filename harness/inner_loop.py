@@ -382,7 +382,7 @@ def _run_reviewer_step(
         project_dir=setup.project_dir,
         task_id=setup.task.id,
         reviewer_names=setup.reviewer_names,
-        agents_dir=ReviewerAssembly()._agents_dir,
+        agents_dir=ReviewerAssembly().agents_dir,
         spec_text=spec_text,
         diff_text=diff_text,
         changed_files=changed_files,
