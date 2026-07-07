@@ -321,12 +321,26 @@ queue/worktree/generator/diff/截图/并行评审/记账/gate/merge/升级全混
 在 `tests/test_t25_adapter_dry.py` / `test_adapters.py`，全量 503 passed /
 2 skipped，覆盖率 84%；claude.py 711 行、18 方法均 ≤50 行。
 
-### T26 [MEDIUM] 配置健壮性 + 消除耦合/魔数  ⏳
+### T26 [MEDIUM] 配置健壮性 + 消除耦合/魔数  ✅ 2026-07-07
 **内容**：`models.yaml`/`slop_rules.yaml` 缺加载期 schema 校验（缺字段静默默认或裸 KeyError，对比 reviewers.yaml 已用 pydantic）；
 `PHASE_ARTIFACTS/STAGES/AGENTS` + runners 四张平行 Phase 表（改新 phase 要动四处）→ 合成 `@dataclass PhaseSpec` 单表；
 `inner_loop:896` 访问 `ReviewerAssembly._agents_dir` 私有属性→暴露公开 property；
 `ThreadPoolExecutor(max_workers=len(names))` 空列表会 `ValueError`→`max(1,len)` 且空 reviewer fail-fast；
 散落魔数（timeout 300/180、git 30/10、端口 8765、`fallback[:6]`）提为命名常量。
+**完成记录**：`router.py` 新增 `ModelsConfig` / `TierConfig` / `BudgetConfig`
+pydantic 三层模型，缺字段 / 错字段在 `__init__` 抛 `ValidationError`；
+`slop_check.py` 新增 `SlopConfig` / `SlopRule`（`severity` 限 `Literal["blocker","warn"]`、
+`patterns` 至少 1 条）；`pipeline.py` 把 `PHASE_ARTIFACTS` / `PHASE_STAGES`
+/ `PHASE_AGENTS` 三表合为 `PHASE_SPECS[Phase] -> PhaseSpec` dataclass
+（`DEVELOP` 全 `None`），三张旧 dict 已删，所有 `_call_agent` / 
+`_call_ui_direction` / `_detect_start_phase` 走 `PHASE_SPECS`；
+`ReviewerAssembly.agents_dir` 公开 property 取代 `inner_loop.py` 私有属性访问；
+`run_reviewers_parallel` 空列表 raise `AdapterError`（带可读诊断，
+而非 `ThreadPoolExecutor(max_workers=max(1,0))` 静默吞）；
+魔数 `http://127.0.0.1:8765` 提 `DEFAULT_VISUAL_BASE_URL`、
+`fallback[:6]` 提 `FALLBACK_PAGE_LIMIT`。14 新增在
+`tests/test_t26_config_robustness.py`，全量 517 passed / 2 skipped，
+覆盖率 84%；pipeline.py 780 行（接近 800 但 OK）。
 **验收**：坏配置加载即报清晰错误；新增 phase 只改一处；空 reviewer 有明确诊断。
 
 ### T27 [MEDIUM] 清理双实现债务 + env 文档统一  ⏳
