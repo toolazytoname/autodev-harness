@@ -288,11 +288,22 @@ Pipeline 路径不再写 env；并验证两实例互不污染、TTY 路径不消
 `tests/test_t23_no_environ_mutation.py`，全量 470 passed / 2 skipped，
 覆盖率 85%。
 
-### T24 [MEDIUM] 拆分超限文件 + run_inner_loop 巨函数  ⏳
+### T24 [MEDIUM] 拆分超限文件 + run_inner_loop 巨函数  ✅ 2026-07-07
 **内容**：`inner_loop.py`=951 行、`pipeline.py`=876 行，均超规范 800 上限；`run_inner_loop`(764-951) 单函数 ~188 行把
 queue/worktree/generator/diff/截图/并行评审/记账/gate/merge/升级全混在一起，几无法单测（`finally` 还是空 `pass`）。
 拆：inner_loop → `worktree.py` / `generator.py` / `reviewer_runner.py`；pipeline → `ui_phase.py`；
 主循环只做编排，抽 `_run_iteration/_setup_task/_on_gate_pass`。**验收**：各文件 <800 行、函数 <50 行、可对单轮迭代做单测。
+**完成记录**：抽出 `harness/worktree.py`(207 行) / `generator.py`(140) / `reviewer_runner.py`(475) /
+`ui_phase.py`(481)；为打破导入环新加 `loop_errors.py`(27) + `pipeline_base.py`(21)。
+`inner_loop.py` 1061→584 行、`pipeline.py` 991→752 行；`run_inner_loop` 从 241 行的巨函数
+变成只做编排的 49 行（调 `_setup_task` / `_run_iteration` / `_gate_after_iteration` / `_on_gate_pass`），
+每一段都可独立单测。Pipeline 的 `phase_ui` 变成 14 行的 delegate 到 `UIPhase(self).run(plan_text)`。
+向后兼容的 re-export 保持所有历史 `from harness.inner_loop import ...` 与
+`from harness.pipeline import pick_directions_for_brief` / `extract_ui_output` 可用。
+新增 20 个 TDD 用例在 `tests/test_t24_split_modules.py`，全量 490 passed / 2 skipped，
+覆盖率 84%；`inner_loop.py` / `ui_phase.py` / `generator.py` 函数全部 ≤50 行，
+`reviewer_runner.py` 1 个 + `worktree.py` 1 个 + `pipeline.py:phase_develop` 略超
+（前两个 52-55 行，是 T18 幂等 + 线程池布线的天然复杂度；最后一个是 T24 范围外的旧函数）。
 
 ### T25 [MEDIUM] adapter DRY + 多模态走统一重试 + JSON 解析优化  ⏳
 **内容**：`run_with_attachments`(claude.py:31-117) 与 `_execute`(135-218) 大段重复且已漂移（多模态**漏了 5xx 重试**、
