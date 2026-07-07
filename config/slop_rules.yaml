@@ -1,0 +1,78 @@
+# Slop-check rules — extend here without touching Python.
+#
+# Each rule has:
+#   - id        (unique slug)
+#   - severity  (blocker | warn)
+#   - description  (printed when the rule fires)
+#   - patterns  (a list of regex strings, case-insensitive)
+#
+# A rule fires if *any* pattern matches on any line.
+#
+# To disable a built-in rule, omit it here and import BUILTIN_RULES
+# from harness.slop_check instead of this file.
+
+rules:
+  - id: font.inter
+    severity: blocker
+    description: Inter is the canonical AI-default sans — use a baseline pair.
+    patterns:
+      - "family=['\"]?Inter[:,\\s]"
+      - "font-inter"
+      - "--font-inter"
+
+  - id: font.roboto
+    severity: blocker
+    description: Roboto looks like every Material app — pick a baseline pair.
+    patterns:
+      - "family=['\"]?Roboto"
+
+  - id: tailwind.cdn
+    severity: blocker
+    description: Tailwind CDN is a slop tell — its default theme overrides your typography and color.
+    patterns:
+      - "cdn\\.tailwindcss\\.com"
+
+  - id: gradient.purple_pink
+    severity: blocker
+    description: Purple→pink gradient is the AI-generic-hero cliché.
+    patterns:
+      - "linear-gradient\\([^)]*(?:7c3aed|8b5cf6|a855f7|d946ef|ec4899|f472b6)[^)]*"
+      - "bg-gradient-to-[a-z]+\\s+from-purple"
+
+  - id: shadow.standard_card
+    severity: warn
+    description: The default 0 4px 12px rgba(0,0,0,.08) shadow — use a baseline token.
+    patterns:
+      - "box-shadow:\\s*0\\s+4px\\s+12px\\s+rgba\\(0,\\s*0,\\s*0,\\s*0\\.0?[58]\\)"
+
+  - id: copy.modern_clean_professional
+    severity: warn
+    description: "Modern / clean / professional filler prose — replace with concrete claims."
+    patterns:
+      - "\\bmodern\\b.{0,30}\\b(clean|professional|best-in-class)\\b"
+      - "\\bclean\\s+(and\\s+)?modern\\b"
+      - "\\bbest-in-class\\b"
+
+  - id: placeholder.lorem
+    severity: blocker
+    description: Lorem ipsum / placeholder text — replace with real copy.
+    patterns:
+      - "\\blorem\\s+ipsum\\b"
+      - "\\bcoming soon\\b"
+      - "\\[add description\\]"
+
+  - id: tailwind.utility_purple_palette
+    severity: warn
+    description: Tailwind purple/indigo/violet utility — re-check palette per direction.
+    patterns:
+      - "\\bbg-(indigo|blue|purple|violet)-[0-9]+\\b"
+      - "\\btext-(indigo|blue|purple|violet)-[0-9]+\\b"
+
+  - id: copy.modern_agency_banner
+    severity: warn
+    description: Generic agency banner copywriting — make a concrete claim.
+    patterns:
+      - "\\belevate\\b.{0,30}\\bexperience\\b"
+      - "\\bunleash\\b.{0,30}\\bpotential\\b"
+      - "\\bgame-?changer\\b"
+      - "\\bcutting[- ]edge\\b"

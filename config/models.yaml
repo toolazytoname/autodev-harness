@@ -1,0 +1,51 @@
+# AutoDevHarness v2 — Model Routing Table
+# Per MASTER-PLAN §4
+#
+# Usage in code:
+#   from harness.router import ModelRouter, ModelSpec
+#   router = ModelRouter()
+#   spec = router.resolve("generate")  # -> ModelSpec(model=..., tier=..., ...)
+#
+# Environment-variable overrides (take precedence over this file):
+#   AUTODEV_MODEL_<TIER>   = e.g. "claude-opus-4-8"
+#   AUTODEV_BASE_URL_<TIER> = e.g. "https://api.example.com/v1"
+#   AUTODEV_FALLBACK_<TIER> = e.g. "haiku-4-5"
+
+tiers:
+  # architect: Fable/Opus — plan, gate撞顶仲裁, 最终验收
+  architect:
+    model: claude-opus-4-8
+    fallback: claude-sonnet-4-6
+
+  # reviewer: Sonnet档 — 评审需要判断力但不需要顶级架构能力
+  reviewer:
+    model: claude-sonnet-4-6
+    fallback: claude-haiku-4-5-20251001
+
+  # worker: MiniMax/Haiku/GLM 等便宜档 — generate/修复/文档/research摘要
+  worker:
+    model: MiniMax-M2.7
+    base_url: https://api.minimaxi.com/anthropic
+    fallback: claude-haiku-4-5-20251001
+
+# Budget thresholds per tier (MASTER-PLAN §5.7)
+# When accumulated spend exceeds warn_at%, a warning is logged.
+# When it reaches stop_at%, the pipeline pauses and asks for confirmation.
+budget:
+  warn_at_percent: 80
+  stop_at_percent: 100
+
+# Stage → tier assignments
+assignments:
+  research:        worker
+  plan:            architect
+  ui_design:       reviewer
+  taskgen:         worker
+  generate:        worker
+  review.correctness: reviewer
+  review.test:     worker      # 跑命令为主，判断为辅
+  review.boundary: reviewer
+  review.visual:   reviewer
+  review.a11y:     worker
+  escalation:      architect   # gate 撞顶仲裁
+  final_acceptance: architect

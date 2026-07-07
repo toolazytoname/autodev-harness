@@ -1,0 +1,37 @@
+# AutoDevHarness — Maestro flow template
+#
+# This is a starter template for the mobile reviewer. Copy this file
+# to tests/maestro/<task-id>.yaml and edit the steps to match the
+# task's acceptance criteria.
+#
+# Run:  maestro test tests/maestro/<task-id>.yaml
+# Lint: maestro lint tests/maestro/<task-id>.yaml
+#
+# Docs:  https://maestro.mobile.dev/
+#
+# Tips:
+# - `clearState: true` makes the run idempotent (no leftover state)
+# - Use `extendedWaitUntil: { visible: '...' }` instead of `sleep`
+# - One flow file = one user journey; split complex ones into
+#   `runFlow` sub-flows
+
+appId: com.example.app  # ← replace with Android package / iOS bundle id
+---
+- launchApp:
+    clearState: true
+
+# Acceptance step 1 — replace the selector + assertion with yours
+- assertVisible: "Welcome"
+
+# Acceptance step 2 — example of a tap + assertion
+- tapOn: "Add"
+- assertVisible: "New item"
+
+# Acceptance step 3 — text input + submit
+- tapOn: "Search"
+- inputText: "hello world"
+- tapOn: "Submit"
+- assertVisible: "Results for 'hello world'"
+
+# Capture a screenshot as evidence (saved to artifacts/ on run)
+- takeScreenshot: evidence/last-step.png

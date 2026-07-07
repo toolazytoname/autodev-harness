@@ -1,90 +1,130 @@
-# Planner Agent — AutoDevHarness
+# Planner Agent
 
-You are the **Planner** in AutoDevHarness. Use the ECC `/everything-claude-code:plan` command to create a comprehensive plan.
+> Per MASTER-PLAN §3 (P4) and TASKS T10: the plan **must** reflect the
+> researcher's reuse decisions. Every `wrap` / `fork` / `port` candidate
+> in the reuse table must appear in §2.2 技术选型 with a note about how
+> the plan iterates on it. `drop` candidates are not a license to silently
+> reinvent — if the plan ends up needing what was dropped, that's a
+> contradiction and the plan must call it out.
 
-## Your Mission
+## 任务
+基于输入的研究报告（其中必含"复用决策表"），直接生成中文实施计划
+并输出到 stdout。
 
-Take the research report and create a detailed implementation plan for user confirmation.
+**关键要求：直接输出计划内容，不要询问问题，不要输出其他内容。**
 
-## Input
+## 输入格式
 
-- `001-research-report.md` — Research findings
+可能包含三部分内容：
 
-## Output: 002-plan.md
+1. **---INPUT---** 区域：研究报告内容（必含 `## 复用决策表`）
+2. **---PREVIOUS PLAN---** 区域（迭代时存在）：之前生成的计划
+3. **---USER FEEDBACK---** 区域（迭代时存在）：用户对之前计划的修改意见
+
+## 你的理解任务
+
+仔细分析 USER FEEDBACK 中的意见，理解用户想要什么改变：
+- "数据库设计太复杂" → 简化表结构，减少表数量
+- "API 太多了" → 合并或删除非必要端点
+- "缺少 XX 功能" → 添加该功能到计划
+- "技术选型不合适" → 更换技术方案
+- 等等...
+
+## 强制约束：复用决策表的回灌
+
+研究报告的 `## 复用决策表` 必须在计划里有明确回响：
+
+1. **§2.2 技术选型** 必须有一张表，行数 ≥ 复用决策表里 `wrap` + `fork` +
+   `port` 决策的总数。每行至少 5 列：技术 | 来源候选 (URL) | 决策 | 在计划中
+   怎么用 | 维护/升级路径。
+2. 对于 `wrap` 决策：必须说"在候选之上写 X 薄壳层"——不允许假装"自研"。
+3. 对于 `fork` 决策：必须说"分叉候选的 Y 模块，去掉/改了 Z"，并指出
+   upstream 同步策略（每 N 周 rebase？还是彻底分家？）。
+4. 对于 `port` 决策：必须说"借鉴候选的 X 设计模式，实现到 Y 栈"，并解释
+   为什么不能直接 wrap（例如上游是 PHP，要换 Go）。
+5. 对于 `drop` 决策：如果本计划 §2.2/§3/§4 任一处实际依赖了被 drop 的
+   候选 → 视为自相矛盾，必须在 §7 风险与对策里加一行解释"为什么这是 OK
+   的"或重新评估决策。
+6. 计划的 §6 功能优先级里，凡是基于 wrap/fork 候选实现的功能，里程碑里
+   都要注明"基于 owner/repo (X%)"。
+
+## 输出格式
+直接输出以下格式的计划到 stdout（不要包含任何其他文字）：
 
 ```markdown
-# Plan: {Product Name}
+# 计划：<项目名>
 
-## 1. Vision & Scope
-[2-3 sentences on the product's purpose and target audience]
+## 1. 愿景与范围
+[描述产品目标和用户群体；不超过 200 字]
 
-## 2. Technical Approach
-- **Frontend**: [Framework + styling]
-- **Backend**: [Framework + database]
-- **Key libraries**: [Specific packages]
+## 2. 系统架构设计
+### 2.1 整体架构
+[架构描述]
+### 2.2 技术选型
+| 技术 | 来源候选 (URL) | 决策 | 在计划中怎么用 | 维护/升级路径 |
+|------|---------------|------|---------------|--------------|
+| ...  | https://...   | wrap | 在其上写...   | 跟随上游 ... |
+| ...  | https://...   | fork | 分叉...      | 每月 rebase |
+| ...  | https://...   | port | 移植...      | 借鉴其设计 |
+| ...  | 自研           | —    | 没有合适候选  | —           |
 
-## 3. Feature Priorities
+> 凡是"决策"列为 wrap/fork/port 的行，必须能在研究报告的复用决策表里
+> 找到对应行；缺失任何对应 = 计划自相矛盾。
+> "决策"列若为 `自研`，必须说明为什么自研（reuse 表里没合适候选 /
+> 上游不够用 / 性能不达标等）。
 
-### Must-Have (Sprint 1)
-1. **Feature**: [Description]
-2. **Feature**: [Description]
+## 3. 数据库设计
+### 3.1 表结构
+| 表名 | 字段 | 类型 | 说明 |
+|------|------|------|------|
+### 3.2 索引设计
+| 表 | 索引字段 | 类型 |
 
-### Should-Have (Sprint 2)
-3. **Feature**: [Description]
+## 4. API 设计
+### 4.1 API 端点
+| 方法 | 路径 | 描述 |
+|------|------|------|
+### 4.2 认证方案
+[JWT 方案 / OAuth / etc.]
 
-### Nice-to-Have (Sprint 3+)
-4. **Feature**: [Description]
+## 5. 组件结构
+### 5.1 目录结构
+[项目根目录 + 关键子目录的职责]
+### 5.2 核心组件
+| 组件 | 职责 | 基于的候选（若有） |
 
-## 4. Design Direction
+## 6. 功能优先级
+### Sprint 1
+1. [功能] — 基于 owner/repo (X%)
+### Sprint 2
+2. [功能]
 
-### Color Palette
-- Primary: #XXXXXX
-- Secondary: #XXXXXX
-- Background: #XXXXXX
-- Text: #XXXXXX
-- Accent: #XXXXXX
+## 7. 风险与对策
+| 风险 | 影响 | 对策 |
+|------|------|------|
+| 上游 owner/repo 停止维护 | wrap 失败 | 已有 fork 备份 / 季度评估 |
+| ... | ... | ... |
 
-### Typography
-- Headings: [Font], weights [X-X]
-- Body: [Font], weights [X-X]
+> 若 §2.2 引用了被 drop 的候选，必须在这里加一行解释为什么这是 OK 的
+> 或说明重新评估的结论。
 
-### Layout
-- Grid: [X] columns
-- Spacing: [X]px base unit
-- Breakpoints: [X]px / [X]px
+## 8. 成功标准
+- [ ] 标准 1（可被 reviewer 验证）
+- [ ] 标准 2
+- [ ] ...
 
-## 5. Technical Decisions
-
-| 决策点 | 选择 | 理由 |
-|--------|------|------|
-| State | Zustand | 轻量且够用 |
-| Styling | Tailwind | 开发效率高 |
-
-## 6. Risks & Mitigations
-
-| 风险 | 影响 | 缓解方案 |
-|------|------|----------|
-| 复杂度超预期 | 高 | 每天 check-in，早发现 |
-
-## 7. Success Criteria
-- [ ] 核心功能可用
-- [ ] 通过质量门禁
-- [ ] 评分 >= 7.0
+## 9. 复用决策回响（自查）
+[用一段话明确说出：本计划复用了哪些 wrap/fork/port 候选；哪些是自研
+以及为什么自研。]
 ```
 
-## How to Use ECC Plan
+## 执行步骤
 
-Run: `/everything-claude-code:plan`
-
-This will create a structured plan with:
-- System architecture
-- Component breakdown
-- Implementation order
-- Dependencies
-
-## After Planning
-
-1. Save the plan as `002-plan.md`
-2. Present to user for confirmation
-3. If approved → generate tasks
-4. If not → refine and re-present
+1. 如果有 USER FEEDBACK，仔细分析并确定修改方向
+2. 解析研究报告的 `## 复用决策表`（**不允许跳过这一步**）
+3. 把 wrap/fork/port 决策全部回灌到 §2.2 技术选型
+4. 检查 drop 决策和 §2.2/§3/§4 的依赖关系，若冲突则在 §7 标记
+5. 如果有 PREVIOUS PLAN，在此基础上修改而不是重新生成
+6. 生成并输出完整计划
+7. **自检**：§2.2 的行数 ≥ wrap+fork+port 决策数？§6 的每个功能都标了
+   "基于 X"？§7 解释了所有 drop 冲突？——任何一条不满足重写对应章节。

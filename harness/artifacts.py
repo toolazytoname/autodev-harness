@@ -1,0 +1,580 @@
+"""Artifacts module - numbered artifact I/O and workflow state management.
+
+All data structures are immutable (frozen=True pydantic models).
+Backward compatible with bash-generated state files.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from typing import Any, Optional
+
+from harness.atomic_io import (
+    AtomicIOError,
+    atomic_write_json,
+    atomic_write_text,
+    read_json_or_raise,
+    read_text_or_raise,
+)
+
+import pydantic
+import yaml
+
+
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
+
+
+class Phase(str, Enum):
+    """Workflow phases in execution order."""
+
+    BRIEF = "brief"
+    RESEARCH = "research"
+    PLAN = "plan"
+    TASKS = "tasks"
+    SPEC = "spec"
+    RUBRIC = "rubric"
+    UI = "ui"
+    DEVELOP = "develop"
+
+    @classmethod
+    def _missing_(cls, value: object) -> Optional["Phase"]:
+        """Accept legacy bash phase names (e.g. 'ui_design' → UI)."""
+        aliases = {"ui_design": cls.UI, "init": cls.BRIEF}
+        if isinstance(value, str):
+            return aliases.get(value)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models (all frozen/immutable)
+# ---------------------------------------------------------------------------
+
+
+class ArtifactFiles(pydantic.BaseModel):
+    """Paths to numbered artifact files."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    brief: Optional[Path] = None
+    research: Optional[Path] = None
+    plan: Optional[Path] = None
+    tasks: Optional[Path] = None
+    spec: Optional[Path] = None
+    rubric: Optional[Path] = None
+    ui: Optional[Path] = None
+
+
+class WorkflowState(pydantic.BaseModel):
+    """Workflow state snapshot — written to workflow-state.json."""
+
+    model_config = pydantic.ConfigDict(
+        frozen=True,
+        populate_by_name=True,  # allow both camelCase and snake_case
+    )
+
+    project_dir: Path = pydantic.Field(validation_alias="projectDir")
+    current_phase: Optional[Phase] = pydantic.Field(default=None, validation_alias="currentPhase")
+    previous_phase: Optional[Phase] = pydantic.Field(default=None, validation_alias="previousPhase")
+    completed_phases: list[Phase] = pydantic.Field(default_factory=list, validation_alias="completedPhases")
+    mode: str = "default"
+    max_iterations: int = pydantic.Field(default=5, validation_alias="maxIterations")
+    pass_threshold: float = pydantic.Field(default=0.8, validation_alias="passThreshold")
+    iteration_count: int = pydantic.Field(default=0, validation_alias="iterationCount")
+    last_error: Optional[str] = pydantic.Field(default=None, validation_alias="lastError")
+    updated_at: datetime = pydantic.Field(default_factory=lambda: datetime.now(timezone.utc), validation_alias="updatedAt")
+    files: ArtifactFiles = pydantic.Field(default_factory=ArtifactFiles)
+
+    @pydantic.field_validator("project_dir", mode="before")
+    @classmethod
+    def _project_dir_from_camel(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return Path(v)
+        return v
+
+    @pydantic.field_validator("completed_phases", mode="before")
+    @classmethod
+    def _completed_phases_from_string(cls, v: Any) -> Any:
+        """Handle bash's comma-separated string format for completed_phases."""
+        if isinstance(v, str):
+            return [Phase(p.strip()) for p in v.split(",") if p.strip()]
+        if isinstance(v, list):
+            return [Phase(p) if isinstance(p, str) else p for p in v]
+        return v
+
+    @pydantic.field_validator("current_phase", "previous_phase", mode="before")
+    @classmethod
+    def _phase_from_string(cls, v: Any) -> Any:
+        """Handle string-to-Phase conversion for phase fields."""
+        if isinstance(v, str):
+            return Phase(v) if v else None
+        return v
+
+    @pydantic.model_validator(mode="before")
+    @classmethod
+    def _parse_phases_from_bash_state(cls, values: dict[str, Any]) -> dict[str, Any]:
+        """Parse phases from bash state file format (comma-separated string or list)."""
+        # completed_phases: handle "brief,research" string from bash
+        raw = values.get("completedPhases") or values.get("completed_phases")
+        if isinstance(raw, str):
+            phases = [Phase(p.strip()) for p in raw.split(",") if p.strip()]
+            values["completed_phases"] = phases
+        elif isinstance(raw, list):
+            values["completed_phases"] = [Phase(p) for p in raw]
+        # current_phase / previous_phase: bash uses currentPhase/previousPhase
+        cp = values.get("currentPhase") or values.get("current_phase")
+        if isinstance(cp, str):
+            values["current_phase"] = Phase(cp) if cp else None
+        pp = values.get("previousPhase") or values.get("previous_phase")
+        if isinstance(pp, str):
+            values["previous_phase"] = Phase(pp) if pp else None
+        return values
+
+
+class TaskStatus(str, Enum):
+    """Task execution status."""
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    BLOCKED = "blocked"
+    DONE = "done"
+
+
+class Kind(str, Enum):
+    """Task kind — determines which reviewer combination the inner loop uses.
+
+    Values are stable strings; they appear in 003-task-queue.json and are
+    matched against config/reviewers.yaml. Do not rename without updating
+    the YAML.
+    """
+
+    UI = "ui"
+    API = "api"
+    LOGIC = "logic"
+    INFRA = "infra"
+
+
+class Platform(str, Enum):
+    """Target platform for a UI/API task (T13 / MASTER-PLAN §3 P5).
+
+    Determines which cross-platform reviewer the inner loop adds on
+    top of the kind's default set:
+
+    - ``web``        → no extra reviewer (visual covers it)
+    - ``mobile``     → mobile (Maestro flow validation)
+    - ``miniprogram``→ miniprogram (automator on macOS)
+    """
+
+    WEB = "web"
+    MOBILE = "mobile"
+    MINIPROGRAM = "miniprogram"
+
+
+def _legacy_default_acceptance() -> list[str]:
+    """Sentinel acceptance for legacy task-queue files (pre-T11)."""
+    return ["(legacy) — please add acceptance criteria before re-running"]
+
+
+def _validate_acceptance(v: Any) -> list[str]:
+    """Ensure acceptance is a non-empty list of non-blank strings.
+
+    Per MASTER-PLAN §3 (P3): every task must have at least one executable
+    acceptance criterion — the test reviewer converts each item directly
+    into an execution step.
+    """
+    if not isinstance(v, list):
+        raise ValueError(f"acceptance must be a list, got {type(v).__name__}")
+    if not v:
+        raise ValueError("acceptance must contain at least one item — see MASTER-PLAN §3 (P3)")
+    cleaned: list[str] = []
+    for i, item in enumerate(v):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"acceptance[{i}] must be a string, got {type(item).__name__}"
+            )
+        if not item.strip():
+            raise ValueError(f"acceptance[{i}] must not be empty or whitespace-only")
+        cleaned.append(item)
+    return cleaned
+
+
+def _validate_kind(v: Any) -> Any:
+    """Accept a string in the kind whitelist, return its canonical form."""
+    if isinstance(v, str):
+        if not v.strip():
+            raise ValueError("kind must be a non-empty string")
+        try:
+            return Kind(v).value
+        except ValueError as e:
+            allowed = sorted(k.value for k in Kind)
+            raise ValueError(
+                f"kind must be one of {allowed}, got {v!r}"
+            ) from e
+    return v
+
+
+class Task(pydantic.BaseModel):
+    """Single task in the task queue."""
+
+    model_config = pydantic.ConfigDict(frozen=True, populate_by_name=True)
+
+    id: str
+    title: str = pydantic.Field(
+        validation_alias=pydantic.AliasChoices("title", "name")
+    )
+    description: Optional[str] = None
+    status: TaskStatus = TaskStatus.PENDING
+    dependencies: list[str] = pydantic.Field(default_factory=list)
+    # Acceptance is non-empty by default — taskgen must supply ≥1 step.
+    # The legacy backcompat path uses a sentinel default; pipeline
+    # validation can detect and reject that sentinel.
+    acceptance: list[str] = pydantic.Field(default_factory=_legacy_default_acceptance)
+    kind: str = "logic"  # ui | api | logic | infra
+    # T13: target platform for cross-platform reviewer selection.
+    # Empty / unknown platforms are treated as "web" (no extra reviewer).
+    platform: str = "web"
+    iteration_count: int = 0
+
+    @pydantic.field_validator("acceptance", mode="before")
+    @classmethod
+    def _validate_acceptance_field(cls, v: Any) -> list[str]:
+        # If the JSON omits the field, default_factory runs first and
+        # produces the sentinel; we must not run our non-empty check on
+        # that. We detect the sentinel by content. If the field IS
+        # provided (even as []), we run the strict validation.
+        if v is None:
+            return _legacy_default_acceptance()
+        return _validate_acceptance(v)
+
+    @pydantic.field_validator("kind", mode="before")
+    @classmethod
+    def _validate_kind_field(cls, v: Any) -> Any:
+        if v is None:
+            return "logic"
+        return _validate_kind(v)
+
+    @pydantic.field_validator("platform", mode="before")
+    @classmethod
+    def _validate_platform_field(cls, v: Any) -> Any:
+        # Default to web (no extra reviewer). Unknown / None / empty
+        # all become "web" — better to fall back to the cheapest path
+        # than to reject the queue.
+        if v is None or v == "":
+            return "web"
+        if isinstance(v, str):
+            if v not in {p.value for p in Platform}:
+                allowed = sorted(p.value for p in Platform)
+                raise ValueError(
+                    f"platform must be one of {allowed}, got {v!r}"
+                )
+        return v
+
+
+class TaskQueue(pydantic.BaseModel):
+    """Task queue container (003-task-queue.json)."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    tasks: list[Task] = pydantic.Field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> TaskQueue:
+        """Parse from raw JSON dict, handling status field variations."""
+        if "tasks" in data:
+            for t in data["tasks"]:
+                # Normalize status: handle both "done" and "completed"
+                if t.get("status") in ("done", "completed"):
+                    t["status"] = "completed"
+                elif t.get("status") == "pending":
+                    t["status"] = "pending"
+        return cls.model_validate(data)
+
+
+# ---------------------------------------------------------------------------
+# Artifact paths
+# ---------------------------------------------------------------------------
+
+ARTIFACT_NAMES = [
+    "000-brief",
+    "001-research-report",
+    "002-plan",
+    "003-task-queue",
+    "004-spec",
+    "005-eval-rubric",
+    "006-ui-spec",
+]
+
+ARTIFACT_EXTENSIONS = {
+    "000-brief": ".md",
+    "001-research-report": ".md",
+    "002-plan": ".md",
+    "003-task-queue": ".json",
+    "004-spec": ".md",
+    "005-eval-rubric": ".md",
+    "006-ui-spec": ".md",
+}
+
+
+def get_artifact_path(project_dir: Path, name: str) -> Path:
+    """Return the full path for a numbered artifact."""
+    ext = ARTIFACT_EXTENSIONS.get(name, ".md")
+    return project_dir / f"{name}{ext}"
+
+
+def resolve_artifact(project_dir: Path, phase: Phase) -> Optional[Path]:
+    """Resolve artifact path for a given phase."""
+    mapping = {
+        Phase.BRIEF: "000-brief",
+        Phase.RESEARCH: "001-research-report",
+        Phase.PLAN: "002-plan",
+        Phase.TASKS: "003-task-queue",
+        Phase.SPEC: "004-spec",
+        Phase.RUBRIC: "005-eval-rubric",
+        Phase.UI: "006-ui-spec",
+    }
+    name = mapping.get(phase)
+    if not name:
+        return None
+    path = get_artifact_path(project_dir, name)
+    return path if path.exists() else None
+
+
+# ---------------------------------------------------------------------------
+# Artifact read/write
+# ---------------------------------------------------------------------------
+
+
+def read_artifact(project_dir: Path, name: str) -> Optional[str]:
+    """Read artifact content by name (e.g. '000-brief'). Returns None if not found."""
+    path = get_artifact_path(project_dir, name)
+    if not path.exists():
+        return None
+    return path.read_text()
+
+
+def write_artifact(project_dir: Path, name: str, content: str) -> Path:
+    """Write artifact content. Creates parent directories if needed."""
+    path = get_artifact_path(project_dir, name)
+    return atomic_write_text(path, content)
+
+
+def artifact_exists(project_dir: Path, name: str) -> bool:
+    """Check if an artifact file exists."""
+    return get_artifact_path(project_dir, name).exists()
+
+
+# ---------------------------------------------------------------------------
+# Workflow state read/write
+# ---------------------------------------------------------------------------
+
+
+STATE_FILE = "workflow-state.json"
+
+
+def read_workflow_state(project_dir: Path) -> Optional[WorkflowState]:
+    """Read workflow state. Returns None if no state file exists.
+
+    Raises AtomicIOError if the file exists but cannot be parsed — the
+    previous behaviour of silently returning None on corruption was the
+    root cause of "mid-write crash → full pipeline restart → all progress
+    lost" (see T17 [CRITICAL]).
+    """
+    state_file = project_dir / STATE_FILE
+    if not state_file.exists():
+        return None
+    try:
+        raw = read_json_or_raise(state_file)
+        # Handle Path serialization from bash (strings instead of Path objects)
+        if "project_dir" in raw:
+            raw["project_dir"] = Path(raw["project_dir"])
+        if "files" in raw and raw["files"]:
+            for k, v in raw["files"].items():
+                if v and isinstance(v, str):
+                    raw["files"][k] = Path(v)
+        return WorkflowState.model_validate(raw)
+    except pydantic.ValidationError as exc:
+        raise AtomicIOError(
+            f"Workflow state at {state_file} has invalid schema: {exc}",
+            path=state_file,
+            cause=exc,
+        ) from exc
+
+
+def write_workflow_state(project_dir: Path, state: WorkflowState) -> Path:
+    """Write workflow state to disk atomically (T17)."""
+    ensure_dir(project_dir)
+    state_file = project_dir / STATE_FILE
+    # Serialize to JSON with Path objects as strings
+    raw = state.model_dump(mode="json")
+    # Convert Path objects to strings for JSON serialization
+    raw["project_dir"] = str(raw["project_dir"])
+    files_raw = raw.get("files") or {}
+    raw["files"] = {k: str(v) if v else None for k, v in files_raw.items()}
+    return atomic_write_json(state_file, raw)
+
+
+def ensure_dir(path: Path) -> None:
+    """Ensure directory exists."""
+    path.mkdir(parents=True, exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Breakpoint / resume helpers
+# ---------------------------------------------------------------------------
+
+
+def get_resume_phase(state: WorkflowState) -> Optional[Phase]:
+    """Determine the phase to resume from given state.
+
+    Logic:
+    - If current_phase is set and not the last phase, resume there
+    - Otherwise find the first missing artifact and return its phase
+    """
+    if state.current_phase:
+        return state.current_phase
+
+    # Find first missing artifact
+    for phase in Phase:
+        if phase == Phase.DEVELOP:
+            continue  # develop is special — tasks drive it
+        name = {
+            Phase.BRIEF: "000-brief",
+            Phase.RESEARCH: "001-research-report",
+            Phase.PLAN: "002-plan",
+            Phase.TASKS: "003-task-queue",
+            Phase.SPEC: "004-spec",
+            Phase.RUBRIC: "005-eval-rubric",
+            Phase.UI: "006-ui-spec",
+        }.get(phase)
+        if not name:
+            continue
+        if not artifact_exists(state.project_dir, name):
+            return phase
+    return None
+
+
+def is_phase_complete(project_dir: Path, phase: Phase) -> bool:
+    """Check if a phase has produced its artifact."""
+    name = {
+        Phase.BRIEF: "000-brief",
+        Phase.RESEARCH: "001-research-report",
+        Phase.PLAN: "002-plan",
+        Phase.TASKS: "003-task-queue",
+        Phase.SPEC: "004-spec",
+        Phase.RUBRIC: "005-eval-rubric",
+        Phase.UI: "006-ui-spec",
+    }.get(phase)
+    if not name:
+        return False
+    return artifact_exists(project_dir, name)
+
+
+# ---------------------------------------------------------------------------
+# Task queue helpers
+# ---------------------------------------------------------------------------
+
+
+def read_task_queue(project_dir: Path) -> Optional[TaskQueue]:
+    """Read task queue from 003-task-queue.json.
+
+    Returns None when the file does not exist (normal startup state).
+    Raises AtomicIOError when the file exists but is corrupt or has an
+    invalid schema — see T17 [CRITICAL] for why silent None was dangerous.
+    """
+    path = get_artifact_path(project_dir, "003-task-queue")
+    if not path.exists():
+        return None
+    try:
+        raw = read_json_or_raise(path)
+        return TaskQueue.from_json(raw)
+    except pydantic.ValidationError as exc:
+        raise AtomicIOError(
+            f"Task queue at {path} has invalid schema: {exc}",
+            path=path,
+            cause=exc,
+        ) from exc
+
+
+def write_task_queue(project_dir: Path, queue: TaskQueue) -> Path:
+    """Write task queue to disk atomically (T17)."""
+    ensure_dir(project_dir)
+    path = get_artifact_path(project_dir, "003-task-queue")
+    # Serialize with TaskStatus as string values. T18 — ``platform`` was
+    # previously dropped here; mobile / miniprogram tasks therefore lost
+    # their dedicated reviewer on resume. Every Task field is now round-
+    # tripped explicitly so future field additions cannot silently drop.
+    data = {
+        "tasks": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "description": t.description,
+                "status": t.status.value if isinstance(t.status, TaskStatus) else t.status,
+                "dependencies": t.dependencies,
+                "acceptance": t.acceptance,
+                "kind": t.kind,
+                "platform": t.platform,
+                "iteration_count": t.iteration_count,
+            }
+            for t in queue.tasks
+        ]
+    }
+    return atomic_write_json(path, data)
+
+
+def get_next_task(queue: TaskQueue) -> Optional[Task]:
+    """Return the first pending task whose dependencies are all completed."""
+    completed_ids = {t.id for t in queue.tasks if t.status == TaskStatus.COMPLETED}
+    for task in queue.tasks:
+        if task.status != TaskStatus.PENDING:
+            continue
+        deps = task.dependencies or []
+        if all(d in completed_ids for d in deps):
+            return task
+    return None
+
+
+def complete_task(queue: TaskQueue, task_id: str) -> TaskQueue:
+    """Return a new TaskQueue with the given task marked completed."""
+    new_tasks = [
+        task.model_copy(update={"status": TaskStatus.COMPLETED}) if task.id == task_id else task
+        for task in queue.tasks
+    ]
+    return TaskQueue(tasks=new_tasks)
+
+
+def mark_task_in_progress(
+    project_dir: Path, task_id: str
+) -> Optional[Task]:
+    """Persist ``TaskStatus.IN_PROGRESS`` for ``task_id`` and return the new task.
+
+    T18 — without this write, a mid-task crash leaves the task PENDING on
+    disk while the worktree (and ``task/{id}`` branch) already exist;
+    resume then mis-classifies the task as fresh work and ``create_worktree``
+    fails because the branch is taken. Writing IN_PROGRESS before the
+    generator runs gives resume an unambiguous signal: pick up where we
+    left off, do not re-create the worktree.
+
+    Returns the updated Task, or ``None`` when the task id is not in the
+    queue (in which case the on-disk queue is left untouched).
+    """
+    queue = read_task_queue(project_dir)
+    if queue is None:
+        return None
+    target = next((t for t in queue.tasks if t.id == task_id), None)
+    if target is None:
+        return None
+    new_tasks = [
+        task.model_copy(update={"status": TaskStatus.IN_PROGRESS})
+        if task.id == task_id
+        else task
+        for task in queue.tasks
+    ]
+    write_task_queue(project_dir, TaskQueue(tasks=new_tasks))
+    return next(t for t in new_tasks if t.id == task_id)

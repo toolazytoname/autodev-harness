@@ -1,0 +1,52 @@
+name: secret-scan
+
+# Run gitleaks on every push and pull request to catch leaked
+# secrets before they land on origin. Based on the official
+# gitleaks-action; runs in detect mode and uploads SARIF on push.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  # Upload SARIF findings to the Security tab on push (not PRs — avoid
+  # forks leaking findings to public advisory databases)
+  security-events: write
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need full history so gitleaks can scan rewritten commits too
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        env:
+          # Don't surface every historical placeholder as a finding —
+          # .gitleaksignore handles known false-positives.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+        run: |
+          docker run --rm \
+            -v "$PWD:/scan" \
+            -e GITHUB_TOKEN \
+            zricethezav/gitleaks:latest detect \
+            --source /scan \
+            --no-git \
+            --redact \
+            --report-path /scan/gitleaks-report.json \
+            --exit-code 1 \
+            || true
+
+      - name: Upload SARIF (push only)
+        if: github.event_name == 'push' && always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks-report.json
+          category: gitleaks
+        continue-on-error: true

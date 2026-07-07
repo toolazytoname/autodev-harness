@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+      - "security"
+    groups:
+      python-minor:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+      python-major:
+        applies-to: version-updates
+        update-types:
+          - "major"
+    # uv already manages the lockfile; let Dependabot bump version
+    # constraints in pyproject.toml only and leave uv.lock to the
+    # local `uv lock --upgrade` step in CI.
+    open-pull-requests-limit: 5
+    # Don't auto-merge — let humans review
+    # (Dependabot auto-merge is opt-in per PR anyway)
+    # Ignore dev-only test runners that don't ship in wheels
+    ignore:
+      - dependency-name: "pytest"
+      - dependency-name: "pytest-cov"

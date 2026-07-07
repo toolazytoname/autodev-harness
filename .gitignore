@@ -28,3 +28,28 @@ logs/
 # Test artifacts
 test-page/
 dist-ui/
+
+# Runner state (verdicts/logs/feedback/escalation; per-machine, not source)
+.runner/
+
+# Python
+__pycache__/
+*.pyc
+
+# Coverage
+.coverage
+uv.lock
+
+# Python virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# Local databases / data files
+*.sqlite
+*.sqlite3
+*.db
+
+# Local secrets directory
+secrets/
