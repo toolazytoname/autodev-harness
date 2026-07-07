@@ -27,8 +27,10 @@ Public API::
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 
 import pydantic
 import yaml
@@ -49,9 +51,168 @@ __all__ = [
     "QuotaConfig",
     "QuotaExhaustedError",
     "QuotaSignal",
+    "ResetHint",
+    "ResetStrategy",
     "classify_quota_error",
     "load_quota_config",
+    "next_reset",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Reset scheduling (T16b)
+# ---------------------------------------------------------------------------
+
+
+class ResetStrategy(str, Enum):
+    """Algorithm for ``next_reset`` to pick the next available reset time."""
+
+    FIXED_CLOCK = "fixed_clock"
+    ROLLING = "rolling"
+
+
+class ResetHint(pydantic.BaseModel):
+    """Parsed recovery time from a quota error string.
+
+    Either ``reset_at`` (an absolute datetime) or
+    ``retry_after_seconds`` (relative offset) may be set, or both.
+    ``honor_reset_hint`` controls whether ``next_reset`` prefers the
+    hint over the strategy-computed value.
+    """
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    reset_at: Optional[datetime] = None
+    retry_after_seconds: Optional[int] = None
+    honor_reset_hint: bool = True
+
+
+def next_reset(
+    strategy: ResetStrategy | str,
+    *,
+    now: datetime,
+    strategy_params: Optional[Mapping[str, Any]] = None,
+    hint: Optional[ResetHint] = None,
+) -> datetime:
+    """Compute when the quota will be available again.
+
+    Pure function — ``now`` is injected from outside so unit tests can
+    pin a clock. ``Date.now()`` / ``datetime.utcnow()`` are intentionally
+    forbidden in this code path.
+
+    Parameters
+    ----------
+    strategy
+        ``ResetStrategy.FIXED_CLOCK`` or ``ResetStrategy.ROLLING``.
+    now
+        Current time. Must be timezone-aware.
+    strategy_params
+        Strategy-specific parameters:
+        - ``fixed_clock``: ``anchor_hour`` (int, 0-23) and
+          ``interval_hours`` (int > 0).
+        - ``rolling``: ``window_hours`` (int > 0).
+    hint
+        Optional :class:`ResetHint` parsed from the quota signal. When
+        set and ``hint.honor_reset_hint`` is True, the hint overrides
+        the strategy-computed value.
+
+    Returns
+    -------
+    datetime
+        The next reset instant, timezone-aware, in UTC.
+    """
+    if now.tzinfo is None or now.tzinfo.utcoffset(now) is None:
+        raise ValueError(
+            "next_reset requires a timezone-aware datetime; got naive "
+            f"{now!r}"
+        )
+
+    # Hint override path (T16b acceptance: hint can come from the
+    # provider's own retry-after / resets-at parsing in T16a).
+    if hint is not None and hint.honor_reset_hint:
+        if hint.reset_at is not None:
+            return _ensure_utc(hint.reset_at)
+        if hint.retry_after_seconds is not None:
+            return now + timedelta(seconds=int(hint.retry_after_seconds))
+
+    # Strategy path.
+    if isinstance(strategy, str):
+        try:
+            strategy = ResetStrategy(strategy)
+        except ValueError as exc:
+            raise ValueError(
+                f"Unknown reset strategy: {strategy!r}. "
+                f"Expected one of {[s.value for s in ResetStrategy]}"
+            ) from exc
+
+    params = dict(strategy_params or {})
+
+    if strategy == ResetStrategy.FIXED_CLOCK:
+        interval = params.get("interval_hours")
+        if interval is None:
+            raise ValueError(
+                "FIXED_CLOCK strategy requires 'interval_hours' in "
+                "strategy_params"
+            )
+        anchor_hour = int(params.get("anchor_hour", 0))
+        return _next_fixed_clock_boundary(now, anchor_hour, int(interval))
+
+    if strategy == ResetStrategy.ROLLING:
+        window = params.get("window_hours")
+        if window is None:
+            raise ValueError(
+                "ROLLING strategy requires 'window_hours' in strategy_params"
+            )
+        return now + timedelta(hours=int(window))
+
+    raise ValueError(f"Unknown reset strategy: {strategy!r}")
+
+
+def _next_fixed_clock_boundary(
+    now: datetime,
+    anchor_hour: int,
+    interval_hours: int,
+) -> datetime:
+    """Return the smallest boundary ``>= now``.
+
+    Boundaries occur at ``anchor_hour``, ``anchor_hour + interval``,
+    ``anchor_hour + 2*interval``, …, capped to a single 24h day. After
+    the last boundary of the day the cycle restarts at ``anchor_hour``
+    of the next day — so for ``anchor=0, interval=5`` the boundaries
+    are 00:00, 05:00, 10:00, 15:00, 20:00 (per day); at 23:30 the
+    next boundary is 00:00 of the following day, not 01:00.
+    """
+    if interval_hours <= 0:
+        raise ValueError(
+            f"interval_hours must be > 0, got {interval_hours}"
+        )
+
+    anchor_hour = anchor_hour % 24
+
+    # Compute the absolute boundary timestamps for today + tomorrow
+    # (anchored at UTC, matching the tz-aware `now`).
+    today_anchor = now.replace(
+        hour=anchor_hour, minute=0, second=0, microsecond=0
+    )
+    boundaries: list[datetime] = []
+    for i in range(24 // interval_hours + 1):
+        boundary = today_anchor + timedelta(hours=i * interval_hours)
+        if boundary > now:
+            boundaries.append(boundary)
+
+    if not boundaries:
+        # All today's boundaries are behind us → first one tomorrow.
+        tomorrow_anchor = today_anchor + timedelta(days=1)
+        boundaries.append(tomorrow_anchor)
+
+    return min(boundaries)
+
+
+def _ensure_utc(dt: datetime) -> datetime:
+    """Coerce a possibly-tz-naive datetime into UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 class ProviderRules(pydantic.BaseModel):
