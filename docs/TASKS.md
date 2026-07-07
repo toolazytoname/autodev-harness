@@ -181,7 +181,7 @@ adapter `_execute` 里把"额度/余额耗尽"从普通 429 瞬时限流中区�
 **验收**：给定各 provider 的真实错误串样本，分类函数正确区分 瞬时限流 / 额度耗尽 / 硬失败；
 误配的错误串不会被当成额度耗尽。**坑点**：错误串会变，全部放 config，代码只读表。
 
-### T16b  恢复时刻计算（两种策略，纯函数）  ⏳
+### T16b  恢复时刻计算（两种策略，纯函数）  ✅ 2026-07-07
 **内容**：`quota.py` 里 `next_reset(strategy, now, hint) -> datetime`。两种策略：
 `fixed_clock`（MiniMax：锚点 `00:00` + 每 `interval_hours=5` 一个边界，取 ≥ now 的下一个边界）；
 `rolling`（Anthropic：`now + window_hours=5`，用完才开始算）。`honor_reset_hint=true` 时，
