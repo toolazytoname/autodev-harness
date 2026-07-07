@@ -337,6 +337,12 @@ class Pipeline:
         else:
             self._linear_sync = linear_sync
         self._log = config.log
+        # T23 — instance-level set of env-var names that this run has
+        # already consumed. Replaces the old ``os.environ[env_var] = ""``
+        # pattern, which mutated process-global state and leaked across
+        # tests / Pipeline instances. Per-instance ⇒ two Pipelines in
+        # the same process never see each other's consumption.
+        self._consumed_feedback: set[str] = set()
 
     # ------------------------------------------------------------------
     # Phase primitives
@@ -445,13 +451,18 @@ class Pipeline:
 
         Returns the feedback string; empty string means "accepted".
         Non-TTY runs read the environment variable once, then approve.
+
+        Consumption is tracked on the Pipeline instance via
+        ``_consumed_feedback`` (T23) — the env var itself is never
+        mutated, so two Pipelines in the same process don't see each
+        other's "consumed" state and tests can't leak into each other.
         """
         env_value = os.environ.get(env_var, "")
         if not _is_interactive():
-            if env_value:
-                # Consume the env feedback exactly once per run
-                os.environ[env_var] = ""
-            return env_value
+            if env_value and env_var not in self._consumed_feedback:
+                self._consumed_feedback.add(env_var)
+                return env_value
+            return ""
         try:
             return input(question).strip()
         except EOFError:
@@ -701,11 +712,13 @@ class Pipeline:
         env_feedback = os.environ.get("AUTODEV_UI_FEEDBACK", "")
 
         if not _is_interactive():
-            if env_choice:
-                os.environ["AUTODEV_UI_CHOICE"] = ""
+            # T23: consumption is instance-scoped; env vars themselves
+            # stay untouched so other Pipelines / tests see a clean env.
+            if env_choice and "AUTODEV_UI_CHOICE" not in self._consumed_feedback:
+                self._consumed_feedback.add("AUTODEV_UI_CHOICE")
                 return env_choice, ""
-            if env_feedback:
-                os.environ["AUTODEV_UI_FEEDBACK"] = ""
+            if env_feedback and "AUTODEV_UI_FEEDBACK" not in self._consumed_feedback:
+                self._consumed_feedback.add("AUTODEV_UI_FEEDBACK")
                 return "", env_feedback
             # No env set — auto-accept the recommended slot
             return "accept_first", ""

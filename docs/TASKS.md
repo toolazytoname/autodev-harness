@@ -274,10 +274,19 @@ merge+complete 构成单一可恢复事务；序列化补全 platform（并审�
 真正在跑的 Python pipeline 不落任何持久日志，无人值守失败时无排障轨迹。引入 `logging`，统一写 `logs/harness.log`，
 关键节点记 stage/task_id/iter/usage/耗时。**验收**：一次失败跑批后，日志能定位到 stage+task+iter。**注**：M4 无人值守续跑尤其依赖它排障。
 
-### T23 [HIGH] 消除 os.environ 原地变异（违反不可变硬规则）  ⏳
+### T23 [HIGH] 消除 os.environ 原地变异（违反不可变硬规则）  ✅ 2026-07-07
 **内容**：`pipeline.py:429/681/684` 用 `os.environ[env_var]=""` 表达"这条反馈已消费"——突变进程级全局、非线程安全、
 污染单测、违反 CLAUDE.md 不可变规则。改：把"已消费"状态放进 Pipeline 实例字段（如 `self._consumed_feedback: set`），env 只读。
 **验收**：多次运行/并发不互相污染；env 不被写。
+**完成记录**：`Pipeline.__init__` 新增 `self._consumed_feedback: set[str] = set()`，
+3 处 `os.environ[X] = ""` 全数改为 `self._consumed_feedback.add(X)` +
+`if X not in self._consumed_feedback` 守卫；`_ask_feedback` 与
+`_ask_version_choice` 改为只读 env、实例级记录消费。`_HostileEnviron` 探针在
+测试里替换 `os.environ.__setitem__/__delitem__` 抛 AssertionError，证明
+Pipeline 路径不再写 env；并验证两实例互不污染、TTY 路径不消费、plan 反馈
+循环仍能在 env 不被清的情况下终止（仅靠实例级 set）。新 12 用例在
+`tests/test_t23_no_environ_mutation.py`，全量 470 passed / 2 skipped，
+覆盖率 85%。
 
 ### T24 [MEDIUM] 拆分超限文件 + run_inner_loop 巨函数  ⏳
 **内容**：`inner_loop.py`=951 行、`pipeline.py`=876 行，均超规范 800 上限；`run_inner_loop`(764-951) 单函数 ~188 行把
