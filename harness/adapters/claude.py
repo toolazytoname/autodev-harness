@@ -24,11 +24,13 @@ from harness.adapters.base import (
     AdapterBase,
     AdapterError,
     AgentResult,
+    InvalidResponseError,
     RateLimitError,
     ServerError,
     TimeoutError,
     TransientError,
     Usage,
+    RETRYABLE_EXCEPTIONS,
 )
 from harness.quota import (
     QuotaExhaustedError,
@@ -116,46 +118,40 @@ class ClaudeAdapter(AdapterBase):
     # Increase base delay — claude's rate limits benefit from slightly longer waits
     RETRY_BASE_DELAY: float = 2.0
 
-    def run_with_attachments(
+    # ------------------------------------------------------------------
+    # Shared subprocess helpers (T25)
+    # ------------------------------------------------------------------
+
+    def _run_subprocess(
         self,
-        prompt: str,
-        attachments,
+        cmd: list[str],
         *,
-        model: str,
-        cwd: Path | str | None = None,
-        timeout: int = 120,
-        base_url: Optional[str] = None,
-        api_key: Optional[str] = None,
-    ) -> AgentResult:
-        """Run claude -p with image/PDF attachments.
+        prompt: str,
+        cwd: Path,
+        timeout: int,
+        env: Optional[dict[str, str]],
+    ) -> tuple[str, str, int, int]:
+        """Run ``cmd`` via Popen and capture stdout/stderr/exit_code.
 
-        The current claude CLI accepts multimodal inputs by listing file
-        paths as positional arguments after the prompt (or as stdin
-        prompt followed by the files). When attachments are present we
-        route them through the same path the CLI uses for screenshots,
-        which keeps the JSON-mode behaviour: stdout is the JSON envelope
-        with ``result`` and ``usage``.
+        T25 — single source of truth for the subprocess plumbing shared
+        by ``_execute`` (text path) and ``run_with_attachments``
+        (multimodal path). Both used to fork their own copy; the copies
+        had drifted (multimodal was missing the 5xx/timeout/transient
+        handling that ``_execute`` had picked up).
 
-        T19 — ``base_url`` and ``api_key`` are forwarded to the subprocess
-        env via ``build_subprocess_env`` so visual reviewer calls also
-        hit the right endpoint with the right credential.
+        Returns ``(stdout, stderr, exit_code, duration_ms)``. Raises:
+
+        - ``TimeoutError`` if the subprocess exceeds ``timeout`` (NOT
+          retried by the outer loop — timeouts are not transient).
+        - ``TransientError`` on ``ConnectionError`` / ``BrokenPipeError``
+          — retried with backoff.
+        - ``AdapterError`` on any other OS-level failure (binary
+          missing, permission denied, …). Not retried.
+
+        Does NOT raise on non-zero exit codes; that branch lives in
+        :meth:`_post_subprocess` where the error classifier can attach
+        its ``_result`` to the exception for the retry loop to surface.
         """
-        from harness.adapters.base import AdapterError  # local import to avoid cycles
-
-        if isinstance(cwd, str):
-            cwd = Path(cwd)
-        cwd = cwd or Path.cwd()
-
-        attachments = [Path(p) for p in attachments]
-        missing = [p for p in attachments if not p.exists()]
-        if missing:
-            raise AdapterError(f"Attachments not found: {missing}")
-
-        cmd = ["claude", "-p", "--model", model, "--output-format", "json"]
-        cmd.extend(str(p) for p in attachments)
-
-        env = build_subprocess_env(base_url=base_url, api_key=api_key)
-
         start_time = time.monotonic()
         try:
             proc = subprocess.Popen(
@@ -171,29 +167,46 @@ class ClaudeAdapter(AdapterBase):
             assert proc.stdin is not None
             assert proc.stdout is not None
             assert proc.stderr is not None
+
             try:
                 stdout, stderr = proc.communicate(input=prompt, timeout=timeout)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
                 raise TimeoutError(
-                    f"claude multimodal subprocess timed out after {timeout}s"
+                    f"claude subprocess timed out after {timeout}s"
                 )
         except TimeoutError:
             raise
         except (ConnectionError, BrokenPipeError) as exc:
             # Transient OS-level errors (peer reset, pipe closed). Surface as
-            # TransientError so the retry loop in base.run() backs off and
-            # tries again instead of burning the budget on the first attempt.
-            raise TransientError(
-                f"transient subprocess error (multimodal): {exc}"
-            ) from exc
+            # TransientError so the retry loop backs off and tries again
+            # instead of burning the budget on the first attempt.
+            raise TransientError(f"transient subprocess error: {exc}") from exc
         except Exception as exc:
-            raise AdapterError(f"Failed to execute claude (multimodal): {exc}") from exc
+            raise AdapterError(f"Failed to execute claude: {exc}") from exc
 
         exit_code = proc.returncode
         duration_ms = int((time.monotonic() - start_time) * 1000)
+        return stdout, stderr, exit_code, duration_ms
 
+    def _post_subprocess(
+        self,
+        stdout: str,
+        stderr: str,
+        exit_code: int,
+        duration_ms: int,
+        attempt: int,
+    ) -> AgentResult:
+        """Classify + parse a finished subprocess run.
+
+        T25 — second half of the shared pipeline. Both ``_execute`` and
+        ``run_with_attachments`` feed the same captured output through
+        this method so error mapping and JSON parsing stay identical
+        across text and multimodal paths.
+        """
+        # T20 error classification: prefers structured JSON envelope, falls
+        # back to word-boundary substring matching on stderr.
         classified = self._classify_error(stderr, stdout, exit_code)
         if classified is not None:
             classified._result = AgentResult(  # type: ignore[attr-defined]
@@ -201,23 +214,167 @@ class ClaudeAdapter(AdapterBase):
                 stderr=stderr,
                 exit_code=exit_code,
                 usage=Usage(duration_ms=duration_ms),
-                retry_count=0,
+                retry_count=attempt,
             )
             raise classified
 
         if exit_code != 0:
             raise AdapterError(
-                f"claude (multimodal) exited with code {exit_code}: {stderr.strip()}"
+                f"claude exited with code {exit_code}: {stderr.strip()}"
             )
 
-        usage, result_text = self._parse_json_output(stdout, duration_ms, 0)
+        usage, result_text = self._parse_json_output(stdout, duration_ms, attempt)
+
         return AgentResult(
             stdout=result_text,
             stderr=stderr,
             exit_code=exit_code,
             usage=usage,
             duration_ms=duration_ms,
-            retry_count=0,
+            retry_count=attempt,
+        )
+
+    def run_with_attachments(
+        self,
+        prompt: str,
+        attachments,
+        *,
+        model: str,
+        cwd: Path | str | None = None,
+        timeout: int = 120,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        fallback_model: Optional[str] = None,
+    ) -> AgentResult:
+        """Run claude -p with image/PDF attachments and apply the same
+        retry / classification machinery as the text path.
+
+        T25 — used to fork a private copy of the subprocess plumbing and
+        therefore had *zero* retries (a single 429 / 5xx blew up the
+        visual reviewer instead of backing off). Now it shares
+        ``_run_subprocess`` + ``_post_subprocess`` with ``_execute`` and
+        walks the same exponential-backoff retry loop, plus an optional
+        ``fallback_model`` swap on quota / retry-exhaustion.
+        """
+        if isinstance(cwd, str):
+            cwd = Path(cwd)
+        cwd = cwd or Path.cwd()
+
+        attachments = [Path(p) for p in attachments]
+        missing = [p for p in attachments if not p.exists()]
+        if missing:
+            raise AdapterError(f"Attachments not found: {missing}")
+
+        cmd = self._build_cmd(prompt, model, cwd)
+        # ``--`` ends the option list so the attachment paths can't be
+        # interpreted as continuation of the prompt or as flags.
+        cmd.append("--")
+        cmd.extend(str(p) for p in attachments)
+
+        env = build_subprocess_env(base_url=base_url, api_key=api_key)
+
+        return self._run_cmd_with_retry(
+            cmd=cmd,
+            prompt=prompt,
+            cwd=cwd,
+            timeout=timeout,
+            env=env,
+            primary_model=model,
+            fallback_model=fallback_model,
+        )
+
+    def _run_cmd_with_retry(
+        self,
+        *,
+        cmd: list[str],
+        prompt: str,
+        cwd: Path,
+        timeout: int,
+        env: Optional[dict[str, str]],
+        primary_model: str,
+        fallback_model: Optional[str],
+    ) -> AgentResult:
+        """Drive ``cmd`` through the standard retry loop, with an optional
+        fallback model after the primary exhausts retries or hits a
+        quota signal.
+
+        T25 — the multimodal path needed this loop because it bypasses
+        ``AdapterBase.run``; sharing the loop's shape (but not reusing
+        ``_run_with_retry`` itself, since that one calls ``_execute``)
+        keeps the retry/timeout/classification behaviour identical.
+        """
+        try:
+            return self._attempt(
+                cmd=cmd, prompt=prompt, cwd=cwd, timeout=timeout, env=env,
+                model=primary_model,
+            )
+        except (*RETRYABLE_EXCEPTIONS, QuotaExhaustedError):
+            if not (fallback_model and fallback_model != primary_model):
+                raise
+            cmd_fb = self._swap_model_in_cmd(cmd, prompt, fallback_model, cwd)
+            return self._attempt(
+                cmd=cmd_fb, prompt=prompt, cwd=cwd, timeout=timeout, env=env,
+                model=fallback_model,
+            )
+
+    def _swap_model_in_cmd(
+        self,
+        cmd: list[str],
+        prompt: str,
+        new_model: str,
+        cwd: Path,
+    ) -> list[str]:
+        """Rebuild ``cmd`` with a different ``--model`` value, preserving
+        any ``--`` separator + attachment list that followed it."""
+        fallback_cmd = self._build_cmd(prompt, new_model, cwd)
+        fallback_cmd.append("--")
+        try:
+            dash_idx = cmd.index("--")
+            attachments = cmd[dash_idx + 1:]
+        except ValueError:
+            attachments = []
+        return fallback_cmd + attachments
+
+    def _attempt(
+        self,
+        *,
+        cmd: list[str],
+        prompt: str,
+        cwd: Path,
+        timeout: int,
+        env: Optional[dict[str, str]],
+        model: str,
+    ) -> AgentResult:
+        """Run ``cmd`` up to ``RETRY_MAX_ATTEMPTS`` times with exponential
+        backoff. Returns the first successful result, re-raises the last
+        retryable exception on exhaustion, or propagates non-retryable
+        errors immediately.
+        """
+        attempt = 0
+        last_retryable: BaseException | None = None
+
+        while attempt < self.RETRY_MAX_ATTEMPTS:
+            try:
+                stdout, stderr, exit_code, duration_ms = self._run_subprocess(
+                    cmd, prompt=prompt, cwd=cwd, timeout=timeout, env=env,
+                )
+                return self._post_subprocess(
+                    stdout, stderr, exit_code, duration_ms, attempt,
+                )
+            except RETRYABLE_EXCEPTIONS as exc:
+                last_retryable = exc
+                attempt += 1
+                if attempt >= self.RETRY_MAX_ATTEMPTS:
+                    break
+                time.sleep(self._backoff_delay(attempt))
+            except (TimeoutError, QuotaExhaustedError):
+                # Non-retryable — surface immediately.
+                raise
+
+        if last_retryable is not None:
+            raise last_retryable
+        raise AdapterError(
+            f"All {self.RETRY_MAX_ATTEMPTS} attempts failed for model '{model}'"
         )
 
     def _build_cmd(
@@ -247,7 +404,7 @@ class ClaudeAdapter(AdapterBase):
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
     ) -> AgentResult:
-        """Execute a single claude -p invocation."""
+        """Execute a single claude -p invocation (text path)."""
         cmd = self._build_cmd(prompt, model, cwd)
 
         # T19 — propagate base_url / api_key to the subprocess env so
@@ -255,74 +412,11 @@ class ClaudeAdapter(AdapterBase):
         # the right credential. None of this mutates the parent process env.
         env = build_subprocess_env(base_url=base_url, api_key=api_key)
 
-        start_time = time.monotonic()
-
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=cwd,
-                env=env,
-                text=True,
-                encoding="utf-8",
-            )
-            assert proc.stdin is not None
-            assert proc.stdout is not None
-            assert proc.stderr is not None
-
-            try:
-                stdout, stderr = proc.communicate(input=prompt, timeout=timeout)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-                raise TimeoutError(f"claude subprocess timed out after {timeout}s")
-
-        except TimeoutError:
-            raise
-        except (ConnectionError, BrokenPipeError) as exc:
-            # Transient OS-level errors (peer reset, pipe closed). Surface as
-            # TransientError so the retry loop in base.run() backs off and
-            # tries again instead of burning the budget on the first attempt.
-            raise TransientError(
-                f"transient subprocess error: {exc}"
-            ) from exc
-        except Exception as exc:
-            raise AdapterError(f"Failed to execute claude: {exc}") from exc
-
-        exit_code = proc.returncode
-        duration_ms = int((time.monotonic() - start_time) * 1000)
-
-        # T20 error classification: prefers structured JSON envelope, falls
-        # back to word-boundary substring matching on stderr. Returns
-        # RateLimitError / ServerError / None — never raises on its own.
-        classified = self._classify_error(stderr, stdout, exit_code)
-        if classified is not None:
-            classified._result = AgentResult(  # type: ignore[attr-defined]
-                stdout=stdout,
-                stderr=stderr,
-                exit_code=exit_code,
-                usage=Usage(duration_ms=duration_ms),
-                retry_count=attempt,
-            )
-            raise classified
-
-        if exit_code != 0:
-            raise AdapterError(
-                f"claude exited with code {exit_code}: {stderr.strip()}"
-            )
-
-        # Parse usage + result from JSON output
-        usage, result_text = self._parse_json_output(stdout, duration_ms, attempt)
-
-        return AgentResult(
-            stdout=result_text,
-            stderr=stderr,
-            exit_code=exit_code,
-            usage=usage,
-            duration_ms=duration_ms,
-            retry_count=attempt,
+        stdout, stderr, exit_code, duration_ms = self._run_subprocess(
+            cmd, prompt=prompt, cwd=cwd, timeout=timeout, env=env,
+        )
+        return self._post_subprocess(
+            stdout, stderr, exit_code, duration_ms, attempt,
         )
 
     def _parse_json_output(
@@ -333,40 +427,89 @@ class ClaudeAdapter(AdapterBase):
     ) -> tuple[Usage, str]:
         """Parse --output-format json output from claude -p.
 
-        The JSON may be wrapped in a markdown code fence. We strip it if present.
-        Expected top-level shape (subject to verification per the note below):
-        {
-          "result": "...plain text response...",
-          "usage": { "input_tokens": N, "output_tokens": N, "total_tokens": N }
-        }
+        The JSON may be wrapped in a markdown code fence. We strip it if
+        present. Expected top-level shape (subject to verification per
+        the note below):
 
-        Returns (Usage, result_text).
+        - object: ``{"result": "...", "usage": {...}}``
+        - array: ``[{"result": "...", "usage": {...}}]`` — some CLI
+          builds wrap the envelope in a one-element list. We unwrap the
+          first element when this happens.
+
+        Returns ``(Usage, result_text)``.
+
+        Raises
+        ------
+        InvalidResponseError
+            T25 — when the output is not parseable as JSON. The legacy
+            implementation silently returned the raw text, which made
+            downstream consumers believe the literal stdout was the
+            result. We treat ``--output-format json`` as a contract:
+            anything else is a broken response.
         """
         text = raw_stdout.strip()
-
-        # Strip markdown code fence if present
         fence_stripped = self._strip_code_fence(text)
 
-        # Try direct JSON parse first
-        try:
-            data = json.loads(fence_stripped)
-        except json.JSONDecodeError:
-            # Fallback: try to extract the first JSON object or array
-            data = self._extract_json(fence_stripped)
-            if data is None:
-                # Last resort: return the raw text as-is
-                return (
-                    Usage(duration_ms=duration_ms),
-                    fence_stripped,
+        data = self._loads_json_envelope(fence_stripped)
+        if data is None:
+            raise InvalidResponseError(
+                "claude --output-format json returned unparseable output: "
+                f"{text[:200]!r}"
+            )
+
+        # Unwrap a one-element array envelope.
+        if isinstance(data, list):
+            if not data:
+                raise InvalidResponseError(
+                    "claude returned an empty JSON array envelope"
+                )
+            data = data[0]
+            if not isinstance(data, dict):
+                raise InvalidResponseError(
+                    "claude JSON array envelope did not contain an object: "
+                    f"{type(data).__name__}"
                 )
 
-        # Extract usage
         usage = self._parse_usage(data, duration_ms)
 
-        # Extract result text — claude's JSON mode typically uses "content" or "result"
-        result_text = data.get("result") or data.get("content") or data.get("text") or ""
+        # Prefer the first explicitly present text field. ``data.get(x)``
+        # style fallback would swallow legitimate falsy values (e.g. an
+        # empty-string ``result``) via the ``or`` short-circuit — explicit
+        # ``in``/``is not None`` guards keep the distinction.
+        result_text = ""
+        for key in ("result", "content", "text"):
+            if key in data and data[key] is not None:
+                result_text = str(data[key])
+                break
 
-        return usage, str(result_text)
+        return usage, result_text
+
+    @staticmethod
+    def _loads_json_envelope(text: str):
+        """Parse ``text`` as a JSON object or array, or return ``None``.
+
+        T25 — replaces the O(n²) ``_extract_json`` progressive-slicing
+        loop with a single O(n) ``JSONDecoder.raw_decode`` walk. Also
+        handles top-level arrays, which the legacy version silently
+        rejected.
+        """
+        if not text:
+            return None
+        decoder = json.JSONDecoder()
+        # Find the first JSON value boundary. ``raw_decode`` itself
+        # tolerates leading whitespace, but we look for ``{`` or ``[``
+        # explicitly so a chatty preamble ("thinking: ... {json}") is
+        # handled cleanly without a manual scan.
+        for opener, closer in (("{", "}"), ("[", "]")):
+            start = text.find(opener)
+            if start == -1:
+                continue
+            try:
+                data, _ = decoder.raw_decode(text[start:])
+            except json.JSONDecodeError:
+                continue
+            return data
+        return None
 
     def _strip_code_fence(self, text: str) -> str:
         """Remove triple-backtick markdown fences from JSON output."""
@@ -379,20 +522,21 @@ class ClaudeAdapter(AdapterBase):
         return text.strip()
 
     def _extract_json(self, text: str) -> Optional[dict]:
-        """Try to extract a JSON object from text that may contain extra content."""
-        import re
+        """Linear-time JSON object/array extractor.
 
-        # Find first { and last } and try to parse that slice
-        start = text.find("{")
-        if start == -1:
+        T25 — was O(n²) via progressive slicing. Delegates to
+        :meth:`_loads_json_envelope` and unwraps a one-element array
+        envelope so the legacy ``dict`` return contract is preserved.
+        """
+        data = self._loads_json_envelope(text)
+        if data is None:
             return None
-        # Try progressively larger slices
-        for end in range(len(text), start, -1):
-            try:
-                return json.loads(text[start:end])
-            except json.JSONDecodeError:
-                continue
-        return None
+        if isinstance(data, list):
+            if not data:
+                return None
+            inner = data[0]
+            return inner if isinstance(inner, dict) else None
+        return data if isinstance(data, dict) else None
 
     def _parse_usage(self, data: dict, duration_ms: int) -> Usage:
         """Extract Usage from parsed JSON data."""

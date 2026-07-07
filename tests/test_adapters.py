@@ -226,19 +226,24 @@ def test_claude_missing_usage_fields():
 
 
 # ---------------------------------------------------------------------------
-# Test: non-JSON stdout falls back to raw text
+# Test: non-JSON stdout now raises InvalidResponseError (T25)
 # ---------------------------------------------------------------------------
 
-def test_claude_non_json_fallback():
+def test_claude_non_json_raises_invalid_response():
+    """T25 — ``--output-format json`` is a contract: garbage stdout must
+    raise ``InvalidResponseError`` instead of being silently passed
+    through as the agent's "result" text. The legacy silent fallback
+    bug is what allowed downstream consumers to mistake protocol
+    violations for legitimate text."""
+    from harness.adapters.base import InvalidResponseError
+
     adapter = ClaudeAdapter()
 
     mock_popen = MagicMock(return_value=mock_proc(stdout="plain text response", returncode=0))
 
     with patch("subprocess.Popen", mock_popen):
-        result = adapter.run("say hello", model="haiku-4-5-20251001", cwd=Path("/tmp"))
-
-    assert result.stdout == "plain text response"
-    assert result.usage.duration_ms >= 0
+        with pytest.raises(InvalidResponseError, match="unparseable output"):
+            adapter.run("say hello", model="haiku-4-5-20251001", cwd=Path("/tmp"))
 
 
 # ---------------------------------------------------------------------------

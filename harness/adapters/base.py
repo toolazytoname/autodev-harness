@@ -177,6 +177,7 @@ RETRYABLE_EXCEPTIONS: tuple[type[AdapterError], ...] = (
 NON_RETRYABLE_EXCEPTIONS: tuple[type[AdapterError], ...] = (
     TimeoutError,
     QuotaExhaustedError,
+    InvalidResponseError,
 )
 
 
