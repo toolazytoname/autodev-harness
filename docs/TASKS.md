@@ -195,7 +195,7 @@ adapter `_execute` 里把"额度/余额耗尽"从普通 429 瞬时限流中区�
 **立即就地续跑**（即"便宜模型接棒"）；把"tier X 已耗尽"记进运行期状态，避免同一轮反复撞墙。
 **验收**：worker 档耗尽后，同一任务自动切到 `claude-haiku-4-5` 继续并跑完；两档都耗尽时进入 T16d 挂起。
 
-### T16d  零 token 挂起 + OS 级定时续跑  ⏳
+### T16d  零 token 挂起 + OS 级定时续跑  ✅ 2026-07-07
 **内容**：无可用 fallback（或全档耗尽）时：①确保在跑的 task/phase 状态落盘（复用 WorkflowState +
 task status，别丢半截）；②`resume_at = next_reset(...)`；③写 `.runner/quota-hold.json`
 （tier/provider/exhausted_at/resume_at/strategy/job_id/project_dir/phase/task_id）；
