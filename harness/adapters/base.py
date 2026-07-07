@@ -280,6 +280,21 @@ class AdapterBase(ABC):
                     api_key=api_key,
                 )
             raise
+        except QuotaExhaustedError as primary_exc:
+            # T16c — quota on the primary is a "skip to fallback" signal,
+            # not a "back off and retry the same model" signal. The
+            # primary never gets a second look; if the fallback is also
+            # drained the exception propagates so T16d can suspend.
+            if fallback_model and fallback_model != model:
+                return self._run_with_retry(
+                    prompt=prompt,
+                    model=fallback_model,
+                    cwd=cwd,
+                    timeout=timeout,
+                    base_url=base_url,
+                    api_key=api_key,
+                )
+            raise
 
     def _run_with_retry(
         self,
