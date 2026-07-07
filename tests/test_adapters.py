@@ -298,14 +298,19 @@ def test_codex_not_implemented():
 # ---------------------------------------------------------------------------
 
 def test_agent_result_success():
+    """T27 — ``success`` is now exit-code-only. stderr can carry
+    harmless warnings / debug logs from a healthy run, so the
+    ``not stderr`` clause that used to flip success to False has been
+    removed."""
     ok = AgentResult(exit_code=0, stderr="")
     assert ok.success is True
 
     non_zero = AgentResult(exit_code=1, stderr="")
     assert non_zero.success is False
 
-    stderr_present = AgentResult(exit_code=0, stderr="some error")
-    assert stderr_present.success is False
+    # Clean exit + noisy stderr — still success.
+    noisy_ok = AgentResult(exit_code=0, stderr="warning: deprecated flag")
+    assert noisy_ok.success is True
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from harness.artifacts import write_artifact
+from harness.env import EnvVars
 from harness.pipeline_base import PipelineError, _is_interactive
 
 
@@ -57,7 +58,7 @@ def pick_directions_for_brief(plan_text: str) -> list[dict[str, str]]:
     # Imported here to avoid a circular import with pipeline.py
     from harness.pipeline import UI_DIRECTIONS
 
-    explicit = os.environ.get("AUTODEV_UI_DIRECTION", "").strip()
+    explicit = os.environ.get(EnvVars.UI_DIRECTION, "").strip()
     recommended_slug = next(
         (d["slug"] for d in UI_DIRECTIONS if d["slug"] == explicit),
         None,
@@ -331,16 +332,16 @@ class UIPhase:
         vars themselves stay untouched so other Pipelines / tests
         see a clean env.
         """
-        env_choice = os.environ.get("AUTODEV_UI_CHOICE", "").strip()
-        env_feedback = os.environ.get("AUTODEV_UI_FEEDBACK", "")
+        env_choice = os.environ.get(EnvVars.UI_CHOICE, "").strip()
+        env_feedback = os.environ.get(EnvVars.UI_FEEDBACK, "")
 
         if not _is_interactive():
             consumed = self._p._consumed_feedback
-            if env_choice and "AUTODEV_UI_CHOICE" not in consumed:
-                consumed.add("AUTODEV_UI_CHOICE")
+            if env_choice and EnvVars.UI_CHOICE not in consumed:
+                consumed.add(EnvVars.UI_CHOICE)
                 return env_choice, ""
-            if env_feedback and "AUTODEV_UI_FEEDBACK" not in consumed:
-                consumed.add("AUTODEV_UI_FEEDBACK")
+            if env_feedback and EnvVars.UI_FEEDBACK not in consumed:
+                consumed.add(EnvVars.UI_FEEDBACK)
                 return "", env_feedback
             return "accept_first", ""
 
@@ -441,18 +442,18 @@ class UIPhase:
         In non-TTY runs reads ``AUTODEV_UI_CHOICE`` (1-4) or
         ``AUTODEV_UI_FEEDBACK`` (free-form text).
         """
-        env_choice = os.environ.get("AUTODEV_UI_CHOICE", "").strip()
-        env_feedback = os.environ.get("AUTODEV_UI_FEEDBACK", "")
+        env_choice = os.environ.get(EnvVars.UI_CHOICE, "").strip()
+        env_feedback = os.environ.get(EnvVars.UI_FEEDBACK, "")
 
         if not _is_interactive():
             # T23: consumption is instance-scoped; env vars themselves
             # stay untouched so other Pipelines / tests see a clean env.
             consumed = self._p._consumed_feedback
-            if env_choice and "AUTODEV_UI_CHOICE" not in consumed:
-                consumed.add("AUTODEV_UI_CHOICE")
+            if env_choice and EnvVars.UI_CHOICE not in consumed:
+                consumed.add(EnvVars.UI_CHOICE)
                 return env_choice, ""
-            if env_feedback and "AUTODEV_UI_FEEDBACK" not in consumed:
-                consumed.add("AUTODEV_UI_FEEDBACK")
+            if env_feedback and EnvVars.UI_FEEDBACK not in consumed:
+                consumed.add(EnvVars.UI_FEEDBACK)
                 return "", env_feedback
             # No env set — auto-accept the recommended slot
             return "accept_first", ""

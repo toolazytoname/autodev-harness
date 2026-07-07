@@ -33,6 +33,7 @@ from harness.artifacts import (
     write_task_queue,
     write_workflow_state,
 )
+from harness.env import EnvVars, api_key_for
 from harness.inner_loop import EscalationError, InnerLoopError, LoopConfig, run_inner_loop
 from harness.logging_setup import get_logger
 from harness.quota_hold import enter_quota_hold  # T16e: wired through Pipeline._run_phase_with_quota_guard
@@ -301,7 +302,7 @@ class Pipeline:
         and return ``None`` when nothing is configured so the subprocess
         inherits the parent process's default key.
         """
-        return os.environ.get(f"AUTODEV_API_KEY_{tier.upper()}")
+        return os.environ.get(api_key_for(tier))
 
     def _call_agent(self, phase: Phase, input_text: str) -> AgentResult:
         """Run the agent for a phase through the router-selected model."""
@@ -456,7 +457,7 @@ class Pipeline:
             self._log(f"Plan saved: {path}")
 
             feedback = self._ask_feedback(
-                "修改意见（或直接回车接受当前计划）: ", "AUTODEV_PLAN_FEEDBACK"
+                "修改意见（或直接回车接受当前计划）: ", EnvVars.PLAN_FEEDBACK
             )
             if not feedback:
                 return path

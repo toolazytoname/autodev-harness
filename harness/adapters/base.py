@@ -64,8 +64,16 @@ class AgentResult:
 
     @property
     def success(self) -> bool:
-        """Return True only for clean exits with no stderr."""
-        return self.exit_code == 0 and not self.stderr
+        """Return True iff the subprocess exited with code 0.
+
+        T27 — the legacy implementation also required ``not stderr``,
+        which was wrong: CLIs routinely write warnings / debug logs to
+        stderr while still exiting cleanly. Smoke tests still called
+        ``result.success`` and got a misleading False on those runs.
+        Callers that need "no stderr noise" should check ``result.stderr``
+        directly.
+        """
+        return self.exit_code == 0
 
 
 # ---------------------------------------------------------------------------

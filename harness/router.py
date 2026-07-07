@@ -25,6 +25,8 @@ from typing import Optional
 import pydantic
 import yaml
 
+from harness.env import EnvVars, api_key_for, base_url_for, fallback_for, model_for
+
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -202,9 +204,9 @@ class ModelRouter:
         tier_name = self._get_tier(stage)
 
         # Environment-variable override: AUTODEV_MODEL_<TIER>
-        env_model = os.environ.get(f"AUTODEV_MODEL_{tier_name.upper()}")
-        env_base_url = os.environ.get(f"AUTODEV_BASE_URL_{tier_name.upper()}")
-        env_fallback = os.environ.get(f"AUTODEV_FALLBACK_{tier_name.upper()}")
+        env_model = os.environ.get(model_for(tier_name))
+        env_base_url = os.environ.get(base_url_for(tier_name))
+        env_fallback = os.environ.get(fallback_for(tier_name))
 
         base = self._tier_specs[tier_name]
 

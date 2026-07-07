@@ -25,6 +25,7 @@ from typing import Optional
 
 from harness.adapters.base import AdapterBase, AdapterError, Usage
 from harness.artifacts import ensure_dir
+from harness.env import EnvVars, api_key_for
 from harness.router import ModelRouter
 from harness.score_card import (
     ScoreCard,
@@ -39,10 +40,10 @@ from harness.score_card import (
 # ---------------------------------------------------------------------------
 
 # Default dev-server URL the visual reviewer targets when no override is
-# supplied via AUTODEV_VISUAL_BASE_URL. Hoisted to a named constant so
-# the port (``8765``) is searchable and configurable from one place.
+# supplied via ``AUTODEV_VISUAL_BASE_URL``. Hoisted to a named constant
+# so the port (``8765``) is searchable and configurable from one place.
 DEFAULT_VISUAL_BASE_URL: str = "http://127.0.0.1:8765"
-AUTODEV_VISUAL_BASE_URL_ENV: str = "AUTODEV_VISUAL_BASE_URL"
+AUTODEV_VISUAL_BASE_URL_ENV: str = EnvVars.VISUAL_BASE_URL
 
 
 # 3-minute per-reviewer ceiling. Reviewer prompts are prompt-only
@@ -139,7 +140,7 @@ def _invoke_reviewer(
     try:
         # T19 — propagate the resolved spec's base_url/api_key/fallback
         # so reviewer calls ride the third-party chain correctly.
-        review_api_key = os.environ.get(f"AUTODEV_API_KEY_{spec.tier.upper()}")
+        review_api_key = os.environ.get(api_key_for(spec.tier))
         result = adapter.run(
             prompt,
             model=spec.model,

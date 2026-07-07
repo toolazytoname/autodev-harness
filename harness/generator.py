@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from harness.adapters.base import AdapterBase, AgentResult
+from harness.env import EnvVars, api_key_for
 from harness.router import ModelRouter
 
 
@@ -84,7 +85,7 @@ def run_generator(
     configured third-party endpoint instead of the default.
     """
     spec = router.resolve("generate")
-    api_key = os.environ.get(f"AUTODEV_API_KEY_{spec.tier.upper()}")
+    api_key = os.environ.get(api_key_for(spec.tier))
     feedback_block = _format_feedback_block(
         iter_num=iter_num,
         blockers=blockers_from_previous,
