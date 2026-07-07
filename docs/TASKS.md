@@ -189,7 +189,7 @@ adapter `_execute` 里把"额度/余额耗尽"从普通 429 瞬时限流中区�
 `now` 从外部注入（禁用裸 `Date.now()` 式不可测写法），便于单测。
 **验收**：fixed_clock 跨午夜/边界、rolling、hint 覆盖 三类用例齐全且纯函数无副作用。
 
-### T16c  降级接棒（先用起来未被接线的 fallback）  ⏳
+### T16c  降级接棒（先用起来未被接线的 fallback）  ✅ 2026-07-07
 **内容**：把 `models.yaml` 里已存在但从未被使用的 `fallback` 接上线。inner_loop / pipeline 捕获
 `QuotaExhaustedError` 时：若该 tier 有 fallback 且 fallback 未被标记耗尽 → 换 ModelSpec 到 fallback
 **立即就地续跑**（即"便宜模型接棒"）；把"tier X 已耗尽"记进运行期状态，避免同一轮反复撞墙。
