@@ -343,13 +343,25 @@ pydantic 三层模型，缺字段 / 错字段在 `__init__` 抛 `ValidationError
 覆盖率 84%；pipeline.py 780 行（接近 800 但 OK）。
 **验收**：坏配置加载即报清晰错误；新增 phase 只改一处；空 reviewer 有明确诊断。
 
-### T27 [MEDIUM] 清理双实现债务 + env 文档统一  ⏳
+### T27 [MEDIUM] 清理双实现债务 + env 文档统一  ✅ 2026-07-07
 **内容**：`autodev-harness.sh:13` 在 `AUTODEV_USE_LEGACY=1` 时仍 `exec` 22KB legacy bash（source 全部 `lib/*.sh`），
 两套 pipeline 需同时维护、注释写"30 天后删"但仍接线；shell 读 `AUTODEV_MODEL/API_KEY/BASE_URL`，Python 读
 `AUTODEV_MODEL_<TIER>` 等，同概念不同名散落 5+ 文件、无集中清单；`opencode/codex` 是纯 stub，应在 `router.resolve`/启动校验
 fail-fast 而非等 `_execute` 才炸；`AgentResult.success`(`not stderr`) 语义错（仅冒烟测试用，属埋雷）。
 **内容决策**：定死 legacy 删除日期或立即下线。改：集中一份 env 变量文档并统一命名；success 只看 exit_code。
 **验收**：env 变量单一清单；legacy 去留有明确结论；未实现 adapter 启动即报错。
+**完成记录**：`autodev-harness-legacy.sh`(707 行) 删除，
+`autodev-harness.sh` 去掉 `AUTODEV_USE_LEGACY` 分支精简到 18 行
+（只转发 `python -m harness`）；新建 `harness/env.py::EnvVars` 数据类
++ 模块级 `model_for` / `api_key_for` / `base_url_for` / `fallback_for`
+helper，集中所有 `AUTODEV_*` 名称；`router` / `pipeline` / `generator` /
+`reviewer_runner` / `ui_phase` 全部走 registry（typo 变 `AttributeError`
+而非静默 `None`）；新建 `docs/ENV.md` 作为运维 / 新人单一来源；
+`AgentResult.success` 改为 `exit_code == 0`（之前 `and not stderr`
+误把含 warning 的健康 exit 报成 fail）；`opencode` / `codex` adapter
+stub 的 `NotImplementedError` 文案明确点名类名便于诊断。
+6 新增在 `tests/test_t27_env_cleanup.py`，全量 523 passed / 2 skipped，
+覆盖率 84%。
 
 ---
 
