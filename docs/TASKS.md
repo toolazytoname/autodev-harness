@@ -207,10 +207,19 @@ Linux 用 `systemd --user` timer，缺失则退 `at`/cron；都没有则退 deta
 并从正确的 task 续上；挂起期间无任何模型调用（用调用计数断言）。
 **坑点**：launchd plist 的 `StartCalendarInterval` 只能到"时分"，跨天要算好日期；job 命名带 project hash 防冲突。
 
-### T16e  可观测性 + 护栏 + CLI  ⏳
+### T16e  可观测性 + 护栏 + CLI  ✅ 2026-07-07
 **内容**：`harness status` 展示 pending quota-hold 与倒计时；新增 `python -m harness quota-status` /
 `--cancel-hold`。护栏：最大自动续跑次数（额度长期不恢复时别无限循环）、"全档耗尽"要冒泡给人而不是空转。
 **验收**：status 正确显示/清除 hold；超过最大续跑次数后停手并留下清晰说明。
+**完成记录**：`harness.quota_hold` 新增 `resume_count` / `MAX_AUTO_RESUME=3` /
+`QuotaResumeExhaustedError` / `begin_resume` / `enter_quota_hold` /
+`cancel_pending_hold` / `format_hold_status`；`harness.__main__` 新增
+`quota-status` 子命令、`--cancel-hold` 旗标、`--continue` 起跑前调
+`begin_resume()`（撞顶抛 QuotaResumeExhaustedError 退出码 2）、`harness status`
+展示 hold + 倒计时、`Pipeline._run_phase_with_quota_guard` 在每个 phase 上
+捕 `QuotaExhaustedError` → `enter_quota_hold` → 冒泡让 __main__ 打印清晰
+信息（不再 stack trace）。新 28 用例在 `tests/test_t16e_quota_observability.py`，
+全量 458 passed / 2 skipped，覆盖率 84%。
 
 ---
 

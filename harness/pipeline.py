@@ -35,6 +35,7 @@ from harness.artifacts import (
 )
 from harness.inner_loop import EscalationError, InnerLoopError, LoopConfig, run_inner_loop
 from harness.logging_setup import get_logger
+from harness.quota_hold import enter_quota_hold  # T16e: wired through Pipeline._run_phase_with_quota_guard
 from harness.router import ModelRouter
 from harness.score_card import extract_json_from_fenced
 
@@ -198,6 +199,9 @@ class PipelineConfig:
     mode: str = "new"  # new | iterate | test
     max_iterations: int = 5
     pass_threshold: float = 0.8
+    # T16e: populated by `begin_resume()` in __main__ before pipeline.run()
+    # so a re-entrant quota-hold can carry the incremented resume_count.
+    next_resume_count: int = 0
     # Injected for testability; defaults are created lazily in Pipeline
     log: Callable[[str], None] = print
 
@@ -878,7 +882,7 @@ class Pipeline:
                 extra={"stage": phase.value, "mode": mode_str},
             )
             try:
-                runners[phase]()
+                self._run_phase_with_quota_guard(phase, runners[phase])
             except Exception as exc:
                 _log.exception(
                     "phase_failed",
@@ -894,6 +898,63 @@ class Pipeline:
             _log.info("phase_complete", extra={"stage": phase.value})
 
         self._log("Pipeline complete ✅")
+
+    def _run_phase_with_quota_guard(
+        self,
+        phase: "Phase",
+        runner: Callable[[], object],
+    ) -> None:
+        """Run a single phase; on ``QuotaExhaustedError`` write a hold + re-raise.
+
+        T16e — the hold is the single source of truth for what is
+        waiting, so we persist it here (where we know the phase /
+        current task) before propagating to the CLI layer, which
+        then decides what to print and what exit code to return.
+        """
+        from harness.adapters.base import QuotaExhaustedError
+
+        try:
+            runner()
+        except QuotaExhaustedError as exc:
+            task_id = self._current_task_id()
+            hold_path = enter_quota_hold(
+                self._config.project_dir,
+                exc,
+                resume_count=self._config.next_resume_count,
+                phase=phase.value,
+                task_id=task_id,
+            )
+            _log.warning(
+                "quota_exhausted_suspended",
+                extra={
+                    "stage": phase.value,
+                    "task_id": task_id,
+                    "hold_path": str(hold_path),
+                    "tier": getattr(exc, "tier", None),
+                    "provider": getattr(exc, "provider", None),
+                },
+            )
+            # Re-raise so __main__ can produce the user-facing message
+            # and pick the right exit code.
+            raise
+
+    def _current_task_id(self) -> Optional[str]:
+        """Return the in-progress task id, if any (used to enrich quota-hold).
+
+        T16e — when a phase suspends on quota, we want the hold to record
+        which task was being worked so a human (or the next auto-resume)
+        can pick up exactly where we left off. Read-only — never mutates
+        the queue.
+        """
+        from harness.artifacts import TaskStatus, read_task_queue
+
+        queue = read_task_queue(self._config.project_dir)
+        if queue is None:
+            return None
+        for t in queue.tasks:
+            if t.status == TaskStatus.IN_PROGRESS:
+                return t.id
+        return None
 
     def _detect_start_phase(self) -> Phase:
         """Resume from saved state, or from the first phase missing its artifact."""
