@@ -139,56 +139,18 @@ UI_DIRECTIONS: list[dict[str, str]] = [
     },
 ]
 
-# Brief-keyword → direction-slug picker. First match wins; if no keyword
-# matches, fall back to premium-default. The human can override via the
-# AUTODEV_UI_DIRECTION env var (a single slug) at any time.
-_DIRECTION_KEYWORDS: list[tuple[str, str]] = [
-    (r"dashboard|metric|chart|log|admin|observab|trading|inventory",
-     "data-dense-industrial"),
-    (r"landing|launch|portfolio|marketing|hero|homepage|brand",
-     "high-end-motion"),
-    (r"docs?|wiki|blog|linear[-\s]?like|notion[-\s]?like|note|writing",
-     "editorial-minimal"),
-]
-import re as _re_module  # local alias; re is stdlib so this is free
-_DIRECTION_KEYWORD_PATTERNS = [
-    (_re_module.compile(pattern, _re_module.IGNORECASE), slug)
-    for pattern, slug in _DIRECTION_KEYWORDS
-]
-
-
-def pick_directions_for_brief(plan_text: str) -> list[dict[str, str]]:
-    """Choose which set of 4 aesthetic directions to render this pass.
-
-    Always returns all four. The first slot is the *recommended* one
-    (based on brief keywords); the remaining three rotate in a fixed
-    order so the human can compare. An explicit
-    ``AUTODEV_UI_DIRECTION`` env var forces the recommended slot to a
-    specific slug instead.
-    """
-    explicit = os.environ.get("AUTODEV_UI_DIRECTION", "").strip()
-    recommended_slug = next(
-        (d["slug"] for d in UI_DIRECTIONS if d["slug"] == explicit),
-        None,
-    )
-    if recommended_slug is None:
-        for pattern, slug in _DIRECTION_KEYWORD_PATTERNS:
-            if pattern.search(plan_text):
-                recommended_slug = slug
-                break
-    if recommended_slug is None:
-        recommended_slug = "premium-default"
-
-    by_slug = {d["slug"]: d for d in UI_DIRECTIONS}
-    ordered: list[dict[str, str]] = [by_slug[recommended_slug]]
-    for d in UI_DIRECTIONS:
-        if d["slug"] != recommended_slug:
-            ordered.append(d)
-    return ordered
-
-
-class PipelineError(Exception):
-    """Irrecoverable pipeline failure."""
+# ``pick_directions_for_brief`` and ``extract_ui_output`` moved to
+# harness.ui_phase (T24). Re-exported below — safe at module level
+# because the cycle was broken by moving PipelineError / _is_interactive
+# to harness.pipeline_base.
+from harness.ui_phase import (  # noqa: E402,F401  (T24 re-export)
+    extract_ui_output,
+    pick_directions_for_brief,
+)
+# T24 — PipelineError and _is_interactive moved to pipeline_base so
+# harness.ui_phase can import them without creating a circular import
+# with harness.pipeline.
+from harness.pipeline_base import PipelineError, _is_interactive  # noqa: E402,F401
 
 
 @dataclass
@@ -204,11 +166,6 @@ class PipelineConfig:
     next_resume_count: int = 0
     # Injected for testability; defaults are created lazily in Pipeline
     log: Callable[[str], None] = print
-
-
-def _is_interactive() -> bool:
-    """True when a human can answer prompts on stdin."""
-    return sys.stdin.isatty()
 
 
 def _read_agent_prompt(agents_dir: Path, agent_name: str) -> str:
@@ -260,50 +217,7 @@ def _build_ui_prompt(
     return _build_prompt(base_prompt, context)
 
 
-def extract_ui_output(raw: str) -> tuple[str, str]:
-    """Split ui-design agent output into (spec_markdown, html).
-
-    Supports the ---SPEC--- / ---HTML--- / ---END--- marker convention and
-    falls back to ```html fences (same logic as the bash extract_html).
-    Returns ("", raw) when no HTML section can be identified — the caller
-    decides whether that is acceptable.
-    """
-    text = raw.strip()
-    if not text:
-        return "", ""
-
-    lines = text.splitlines()
-
-    def _find(marker: str) -> Optional[int]:
-        for i, line in enumerate(lines):
-            if line.strip() == marker:
-                return i
-        return None
-
-    spec_i = _find("---SPEC---")
-    html_i = _find("---HTML---")
-    end_i = _find("---END---")
-
-    if html_i is not None:
-        spec = "\n".join(lines[spec_i + 1 : html_i]) if spec_i is not None else ""
-        html_end = end_i if end_i is not None and end_i > html_i else len(lines)
-        html = "\n".join(lines[html_i + 1 : html_end])
-        return spec.strip(), html.strip()
-
-    # Fallback: fenced html block
-    fence_start = None
-    for i, line in enumerate(lines):
-        if line.strip().startswith("```html"):
-            fence_start = i
-            break
-    if fence_start is not None:
-        for j in range(fence_start + 1, len(lines)):
-            if lines[j].strip() == "```":
-                spec = "\n".join(lines[:fence_start]).strip()
-                html = "\n".join(lines[fence_start + 1 : j]).strip()
-                return spec, html
-
-    return "", text
+# ``extract_ui_output`` moved to harness.ui_phase (T24); re-exported above.
 
 
 class Pipeline:
@@ -527,215 +441,62 @@ class Pipeline:
         self._log(f"Max feedback iterations ({MAX_FEEDBACK_ITERATIONS}) reached, using current plan")
         return get_artifact_path(self._config.project_dir, "002-plan")
 
-    def phase_ui(self) -> Path:
-        self._log("━━━ Phase: ui_design (4 aesthetic directions) ━━━")
-        plan_text = read_artifact(self._config.project_dir, "002-plan")
-        if plan_text is None:
-            raise PipelineError("002-plan.md not found — run plan first")
-
-        preview_dir = self._config.project_dir / "preview"
-        versions_dir = preview_dir / "versions"
-        versions_dir.mkdir(parents=True, exist_ok=True)
-
-        ordered = pick_directions_for_brief(plan_text)
-        self._log(f"Directions (recommended first): {[d['slug'] for d in ordered]}")
-
-        # --- Iter 1: render all 4 directions ------------------------------
-        versions = self._render_all_directions(
-            ordered, plan_text, previous_spec="", user_feedback=""
-        )
-        # Automatic slop check on whatever the model shipped — surfaces
-        # blockers visually but does not block the pipeline; that is the
-        # visual reviewer's job (T09). We just print so the human sees it.
-        self._run_slop_check(versions)
-
-        # --- Human pick loop ---------------------------------------------
-        for iteration in range(1, MAX_FEEDBACK_ITERATIONS + 1):
-            self._log("━ UI versions ━")
-            for idx, (direction, spec_md, html) in enumerate(versions, start=1):
-                path = versions_dir / direction["slug"] / "index.html"
-                self._log(f"  [{idx}] {direction['label']}  →  file://{path}")
-
-            choice, feedback = self._ask_version_choice(len(versions))
-            if choice == "accept_first":
-                winner = versions[0]
-                return self._finalize_version(winner, versions_dir)
-            if choice.isdigit():
-                idx = int(choice) - 1
-                if not (0 <= idx < len(versions)):
-                    feedback = choice  # treat as textual feedback
-                else:
-                    versions[idx] = self._refine_version(
-                        versions[idx],
-                        plan_text,
-                        previous_spec=versions[idx][1],
-                        user_feedback=feedback,
-                    )
-                    continue
-
-            # Free-form feedback → regenerate all 4 with the feedback appended
-            versions = self._render_all_directions(
-                ordered,
-                plan_text,
-                previous_spec=versions[0][1],
-                user_feedback=feedback,
-            )
-
-        self._log(
-            f"Max feedback iterations ({MAX_FEEDBACK_ITERATIONS}) reached, "
-            "falling back to recommended direction"
-        )
-        return self._finalize_version(versions[0], versions_dir)
-
-    def _render_all_directions(
+    def _call_ui_direction(
         self,
-        directions: list[dict[str, str]],
+        direction: dict[str, str],
         plan_text: str,
-        previous_spec: str,
-        user_feedback: str,
-    ) -> list[tuple[dict[str, str], str, str]]:
-        """Render every aesthetic direction in ``directions`` and persist them.
+        previous_spec: str = "",
+        user_feedback: str = "",
+    ) -> AgentResult:
+        """T24 — thin delegate. Implementation lives in UIPhase.
 
-        Returns one tuple ``(direction, spec_md, html)`` per direction, in
-        the same order. Each direction's spec and html are written to
-        ``preview/versions/{slug}/`` regardless of whether the parse
-        succeeds — failures still produce a dir + placeholder so the
-        human sees "this direction failed" rather than "missing file".
+        Kept on ``Pipeline`` so the public surface of the phase_ui
+        helper stays intact for any caller that imports it from
+        ``harness.pipeline``. The body delegates to a freshly
+        constructed ``UIPhase`` instance, which owns the prompt
+        assembly + the slop check / version-choice prompts.
         """
-        rendered: list[tuple[dict[str, str], str, str]] = []
-        for direction in directions:
-            self._log(f"  rendering direction: {direction['slug']}")
-            try:
-                result = self._call_ui_direction(
-                    direction,
-                    plan_text,
-                    previous_spec=previous_spec,
-                    user_feedback=user_feedback,
-                )
-                spec_md, html = extract_ui_output(result.stdout)
-            except PipelineError as exc:
-                self._log(f"    direction {direction['slug']} failed: {exc}")
-                spec_md, html = "", ""
+        from harness.ui_phase import UIPhase  # local import avoids cycle
 
-            versions_dir = self._config.project_dir / "preview" / "versions"
-            dir_path = versions_dir / direction["slug"]
-            dir_path.mkdir(parents=True, exist_ok=True)
-            (dir_path / "index.html").write_text(html or "<!DOCTYPE html><!-- empty -->\n")
-            (dir_path / "spec.md").write_text(spec_md or "")
-            rendered.append((direction, spec_md, html))
-        return rendered
-
-    def _refine_version(
-        self,
-        version: tuple[dict[str, str], str, str],
-        plan_text: str,
-        previous_spec: str,
-        user_feedback: str,
-    ) -> tuple[dict[str, str], str, str]:
-        """Re-run one direction with feedback (no other directions affected)."""
-        direction = version[0]
-        result = self._call_ui_direction(
+        return UIPhase(self)._call_ui_direction(
             direction,
             plan_text,
             previous_spec=previous_spec,
             user_feedback=user_feedback,
         )
-        spec_md, html = extract_ui_output(result.stdout)
-        versions_dir = self._config.project_dir / "preview" / "versions"
-        dir_path = versions_dir / direction["slug"]
-        dir_path.mkdir(parents=True, exist_ok=True)
-        (dir_path / "index.html").write_text(html)
-        (dir_path / "spec.md").write_text(spec_md)
-        self._log(f"  regenerated: {direction['slug']}")
-        return (direction, spec_md, html)
-
-    def _finalize_version(
-        self,
-        winner: tuple[dict[str, str], str, str],
-        versions_dir: Path,
-    ) -> Path:
-        """Copy the chosen version's spec+html into the canonical artifacts."""
-        direction, spec_md, html = winner
-        canonical_html = self._config.project_dir / "preview" / "index.html"
-        canonical_html.parent.mkdir(parents=True, exist_ok=True)
-        canonical_html.write_text(html)
-        spec_path = write_artifact(
-            self._config.project_dir, "006-ui-spec", spec_md
-        )
-        self._log(f"Picked {direction['label']} → {spec_path}")
-        return spec_path
 
     def _run_slop_check(self, versions):
-        """Print the slop check report for every rendered direction.
+        """T24 — thin delegate. Implementation lives in UIPhase."""
+        from harness.ui_phase import UIPhase  # local import avoids cycle
 
-        Non-blocking: warnings/blockers are logged so the human sees the
-        diagnostics, but we still let the pipeline proceed — T09
-        ``visual`` reviewer will block in the inner loop if needed.
-        """
-        from harness.slop_check import SlopValidator, load_rules
-
-        # config/ is at the repo root, not under the project dir
-        repo_root = Path(__file__).parent.parent
-        rules_path = repo_root / "config" / "slop_rules.yaml"
-        validator = (
-            SlopValidator(rules=load_rules(rules_path))
-            if rules_path.exists()
-            else SlopValidator()
-        )
-        versions_dir = self._config.project_dir / "preview" / "versions"
-        for direction, _spec, _html in versions:
-            self._log(f"  slop check: {direction['slug']}")
-            for artifact_name in ("index.html", "spec.md"):
-                artifact = versions_dir / direction["slug"] / artifact_name
-                if not artifact.exists():
-                    continue
-                result = validator.validate_file(artifact)
-                for line in result.render().splitlines():
-                    self._log(f"    {line}")
-                if not result.passed:
-                    self._log(
-                        f"    → {direction['slug']}/{artifact_name} has {len(result.blockers)} "
-                        "slop blocker(s); T09 visual reviewer will gate."
-                    )
+        return UIPhase(self)._run_slop_check(versions)
 
     def _ask_version_choice(self, num_versions: int) -> tuple[str, str]:
-        """Prompt the human for a version choice.
+        """T24 — thin delegate. Implementation lives in UIPhase.
 
-        Returns ``(choice, feedback)``. ``choice`` is one of:
-          - ``"accept_first"`` — accept whichever is at position 1
-          - ``"1"`` / ``"2"`` / ... — pick that version (feedback ignored)
-          - any other string — treat as free-form feedback text
-        In non-TTY runs reads ``AUTODEV_UI_CHOICE`` (1-4) or
-        ``AUTODEV_UI_FEEDBACK`` (free-form text).
+        Kept on ``Pipeline`` for the T23 no-mutation probes in
+        ``tests/test_t23_no_environ_mutation.py`` that call this
+        method directly on a Pipeline instance to assert the
+        consumed-feedback set lives on the Pipeline.
         """
-        env_choice = os.environ.get("AUTODEV_UI_CHOICE", "").strip()
-        env_feedback = os.environ.get("AUTODEV_UI_FEEDBACK", "")
+        from harness.ui_phase import UIPhase  # local import avoids cycle
 
-        if not _is_interactive():
-            # T23: consumption is instance-scoped; env vars themselves
-            # stay untouched so other Pipelines / tests see a clean env.
-            if env_choice and "AUTODEV_UI_CHOICE" not in self._consumed_feedback:
-                self._consumed_feedback.add("AUTODEV_UI_CHOICE")
-                return env_choice, ""
-            if env_feedback and "AUTODEV_UI_FEEDBACK" not in self._consumed_feedback:
-                self._consumed_feedback.add("AUTODEV_UI_FEEDBACK")
-                return "", env_feedback
-            # No env set — auto-accept the recommended slot
-            return "accept_first", ""
+        return UIPhase(self)._ask_version_choice(num_versions)
 
-        prompt = (
-            f"Choose 1-{num_versions}, type feedback to regenerate all, "
-            "or press Enter to accept #1: "
-        )
-        try:
-            raw = input(prompt).strip()
-        except EOFError:
-            return "accept_first", ""
-        if not raw:
-            return "accept_first", ""
-        if raw in {str(i) for i in range(1, num_versions + 1)}:
-            return raw, ""
-        return "", raw
+    def phase_ui(self) -> Path:
+        """Run the ui_design phase (T24 — delegated to UIPhase).
+
+        The render / refine / finalize / human-pick loop, the
+        per-direction call, the slop check, and the version-choice
+        prompt all live in ``harness.ui_phase.UIPhase``. ``phase_ui``
+        is a thin adapter that loads the plan and forwards to it.
+        """
+        from harness.ui_phase import UIPhase  # T24 — local import to dodge cycle
+
+        plan_text = read_artifact(self._config.project_dir, "002-plan")
+        if plan_text is None:
+            raise PipelineError("002-plan.md not found — run plan first")
+        return UIPhase(self).run(plan_text)
 
     def phase_tasks(self) -> Path:
         self._log("━━━ Phase: tasks ━━━")
