@@ -1,0 +1,47 @@
+# AutoDevHarness v2 — Resilience Defaults
+# T34: single source of truth for timeouts / retry / quota knobs.
+#
+# Environment overrides (highest priority):
+#   AUTODEV_TIMEOUT_<SECTION>_<FIELD>   e.g. AUTODEV_TIMEOUT_AGENT
+#   AUTODEV_RETRY_<FIELD>               e.g. AUTODEV_RETRY_MAX_ATTEMPTS
+#   AUTODEV_QUOTA_<FIELD>               e.g. AUTODEV_QUOTA_MAX_AUTO_RESUME
+#
+# T34 rule: only relocate knobs here — don't change values without
+# a behaviour-change commit.
+
+timeouts:
+  # CLI agent subprocess budget. Pipeline / Generator pass this through
+  # to ``adapter.run(timeout=...)``.
+  agent: 600
+  # Generator's per-call budget (smaller than the agent default because
+  # generator runs are typically single-prompt, no round-trips).
+  generator: 300
+  # Reviewer budget — even smaller; reviewers are short-turn
+  # classification calls.
+  reviewer: 180
+  # Visual reviewer's Playwright navigation timeout (ms, not seconds).
+  visual: 15000
+  # Quota-hold scheduler read timeout (seconds).
+  quota: 30
+
+retry:
+  # Initial back-off delay (seconds); exponential schedule multiplies
+  # this by 2**attempt, capped at ``max_delay_seconds``.
+  base_delay_seconds: 1.0
+  # Total attempts before raising the original retryable exception
+  # (i.e. 3 attempts = 1 try + 2 retries).
+  max_attempts: 3
+  # Hard cap on any single back-off (seconds). Provider
+  # ``retry_after_seconds`` hints are clamped to this.
+  max_delay_seconds: 32
+  # Jitter ratio in [0, 1]. Each delay is multiplied by
+  # ``1 + uniform(-ratio, +ratio)`` to break thundering-herd
+  # alignment in fleet retries. 0.0 = no jitter (legacy behaviour).
+  jitter_ratio: 0.25
+
+quota:
+  # Rolling window length (hours) when the ROLLING strategy is in
+  # effect and no provider hint is available.
+  window_hours: 5
+  # Max consecutive auto-resumes before escalating to a human.
+  max_auto_resume: 3

@@ -352,7 +352,13 @@ class AdapterBase(ABC):
                 # it on exhaustion (the fallback layer branches on type).
                 last_retryable = exc
                 last_result = getattr(exc, "_result", None)
-                delay = self._backoff_delay(attempt)
+                # T34: honor the provider's ``retry_after_seconds`` hint
+                # (populated by RateLimitError when the upstream sends
+                # ``Retry-After``). Other retryable errors don't carry a
+                # hint, so retry_after_seconds is None and the schedule
+                # wins.
+                retry_after = getattr(exc, "retry_after_seconds", None)
+                delay = self._backoff_delay(attempt, retry_after_seconds=retry_after)
                 attempt += 1
                 if attempt >= self.RETRY_MAX_ATTEMPTS:
                     break
@@ -383,12 +389,58 @@ class AdapterBase(ABC):
             f"without a usable result"
         )
 
-    def _backoff_delay(self, attempt: int) -> float:
-        """Compute exponential back-off delay for a given attempt number."""
-        import math
+    def _backoff_delay(
+        self,
+        attempt: int,
+        *,
+        retry_after_seconds: Optional[int] = None,
+        base_delay: Optional[float] = None,
+        max_delay: Optional[float] = None,
+        jitter_ratio: Optional[float] = None,
+    ) -> float:
+        """Compute back-off delay for a given attempt number.
 
-        delay = self.RETRY_BASE_DELAY * (2**attempt)
-        return min(delay, self.RETRY_MAX_DELAY)
+        T34 changes:
+
+        1. ``retry_after_seconds`` — when the upstream error carries a
+           provider hint (e.g. ``Retry-After: 10``), prefer that value
+           over the raw exponential schedule. Clamped to ``max_delay``.
+        2. ``jitter_ratio`` — each delay is multiplied by
+           ``1 + uniform(-ratio, +ratio)`` to break thundering-herd
+           alignment in fleet retries. Defaults to
+           :data:`harness.resilience.ResilienceConfig.retry.jitter_ratio`
+           (= 0.25) so a fleet of 1000 workers doesn't all hit the API
+           at the same instant after a 429.
+
+        All knobs can be overridden per-call; sensible defaults come
+        from :mod:`harness.resilience`. Existing call-sites that
+        supply no override still work.
+        """
+        import random
+
+        if base_delay is None:
+            base_delay = self.RETRY_BASE_DELAY
+        if max_delay is None:
+            max_delay = self.RETRY_MAX_DELAY
+        if jitter_ratio is None:
+            try:
+                from harness.resilience import get_resilience_config
+
+                jitter_ratio = get_resilience_config().retry.jitter_ratio
+            except Exception:
+                jitter_ratio = 0.0  # safe fallback when the module isn't importable
+
+        # Provider hint beats the schedule; clamp to max_delay.
+        if retry_after_seconds is not None:
+            base = min(float(retry_after_seconds), max_delay)
+        else:
+            base = min(base_delay * (2**attempt), max_delay)
+
+        # Apply jitter symmetrically: delay ∈ [base*(1-r), base*(1+r)].
+        if jitter_ratio > 0:
+            jitter = random.uniform(-jitter_ratio, jitter_ratio)
+            return base * (1.0 + jitter)
+        return base
 
     def run_with_attachments(
         self,
