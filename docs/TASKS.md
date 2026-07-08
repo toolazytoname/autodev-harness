@@ -799,7 +799,7 @@ yaml 与 loader 导出。全量 585 passed / 2 deselected，覆盖率 84%+。`ba
 
 ## M7 死代码清扫 + 拆分（依赖 T28 完成；解循环依赖后可大幅瘦身）
 
-### T35 [MED] 死代码清扫（_DISPATCH × 2 + 双方法定义 + sleeper 阻塞修复）  ⏳
+### T35 [MED] 死代码清扫（_DISPATCH × 2 + 双方法定义 + sleeper 阻塞修复）  ✅ 2026-07-08
 **内容**：四处死代码 + 一个潜在阻塞 bug：
 
 1. **`harness/scheduler.py:371-383` 与 `:386-398`**：**`_DISPATCH` 和 `_CANCEL_DISPATCH`
@@ -847,6 +847,18 @@ yaml 与 loader 导出。全量 585 passed / 2 deselected，覆盖率 84%+。`ba
 - `UIPhase._call_ui_direction` 在 `ui_phase.py:245` 用 `self._call_ui_direction` 是同名方法
   调用还是外部 Pipeline 注入？**动手前 grep 一次确认调用链**——避免删错接口。
 - 第 2、3 点的双方法删除是否会破坏 `_render_all_directions` 链：先 grep `grep -rn '_render_all_directions' harness/` 把全部调用点拉直。
+
+**完成记录**：四块全部就位 — (1) `scheduler.py` 的 `_DISPATCH` / `_CANCEL_DISPATCH` 双定义（两段共
+28 行复制粘贴）整段删除（真路由在 `register_wakeup` / `cancel_wakeup` 的 if/elif 链里，从未读过这
+两表）。(2) `pipeline.py` 的 `_call_ui_direction` 42 行原实现删除，仅保留 T24 引入的薄 delegate
+（UIPhase 一向只调 delegate）。(3) `ui_phase.py` 的 `_ask_version_choice` 33 行首版删除，仅
+保留 38 行 canonical 版（Python last-def-wins，第一段死代码）。(4) `scheduler._register_sleeper`
+非 fork 系统 fail-fast：`hasattr(os, "fork") == False` 即抛 `NotImplementedError` 提示装
+launchd/systemd/at（避免旧逻辑在父进程跑 `time.sleep + os.system` 阻塞整个 harness）；
+`os.system(command)` 改 `subprocess.Popen(command, shell=False)`（无 shell 解析，路径
+含空格/特殊字符不再爆）。8 新增在 `tests/test_t35_dead_code.py` (216 行)，全量 593 passed /
+2 deselected，覆盖率 84%+。`pipeline.py` 805→762（**回 800 以下**）/ `ui_phase.py` 481→450 /
+`scheduler.py` 423→399。
 
 ---
 
