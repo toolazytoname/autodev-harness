@@ -673,7 +673,7 @@ resolve / env 覆盖两条路径传透。`ModelRouter._load_config` 遍历所有
 
 ### T6+: M6 CI 与工具链（独立，可早做）
 
-### T33 [HIGH] CI 缺口：测试 workflow + ruff 起步  ⏳
+### T33 [HIGH] CI 缺口：测试 workflow + ruff 起步  ✅ 2026-07-08
 **内容**：`.github/workflows/` 下只有 `security.yml`（gitleaks），**没有任何跑 `pytest` 的
  workflow**。523 个测试从未在 PR 上跑过，"84% 覆盖率"这个数字没有守门机制。
  无 ruff / mypy / pre-commit。
@@ -713,6 +713,15 @@ resolve / env 覆盖两条路径传透。`ModelRouter._load_config` 遍历所有
 - 不要在 CI 里 `pip install claude / opencode / codex`——那些是外部 CLI；项目本身只装 pydantic+pyyaml+pytest。
 - mypy 留着——还没 untyped，强行上 -strict 会触发大量 stub fail，**禁止**为此大改代码。
 - 跑 ruff 报的告警若是项目自己定的（如 `B008` 在函数默认值），**保持现状**，不要纠结。
+
+**完成记录**：CI 双 job 全部上线 — `.github/workflows/tests.yml` (push/PR to main+develop，
+python 3.11/3.12 矩阵，pip cache，pytest `-m "not slow" --cov=harness --cov-fail-under=80 -q`) +
+`.github/workflows/lint.yml` (ruff 0.6.9 钉版)。ruff baseline 358 行接受现有 noise：`comm -23`
+diff 当前输出与 `.ruff-baseline.txt` 只 flag **新**违规。`pyproject.toml` 加 `[tool.ruff]`
+`line-length=100` / `target-version=py311` / 排除 `.venv` `.worktrees` 等；`[tool.ruff.lint]`
+`select=["E","F","I","B","UP","SIM"]`（spec 保守起步）+ `per-file-ignores` (`tests/*` 放
+F401/F811 / `scripts/*` 放 E402) + `[tool.ruff.format]` (双引号 + space indent)。
+`README.md` 顶部加两 GH Actions badge。零代码/测试改动，574 passed 保持绿。
 
 ---
 
