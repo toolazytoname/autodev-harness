@@ -612,7 +612,7 @@ docstring 引用。(B) `_parse_json_output` 解析到 `is_error: true` 即抛 `I
 
 ---
 
-### T32 [HIGH] opencode/codex 工厂 + 启动 fail-fast  ⏳
+### T32 [HIGH] opencode/codex 工厂 + 启动 fail-fast  ✅ 2026-07-08
 **内容**：当前 `config/models.yaml` 改了 model 字符串后，系统会**继续用 `ClaudeAdapter`**
  静默跑错后端；`router.resolve` 只返回 `ModelSpec(model=str)`，无 adapter 映射。
  现状（动手前先 grep 确认）：
@@ -654,6 +654,20 @@ docstring 引用。(B) `_parse_json_output` 解析到 `is_error: true` 即抛 `I
 - 不要顺手实现 `OpenCodeAdapter` / `CodexAdapter` 真实逻辑——超出本任务，那是另一条线。
 - 老 configs 没 `adapter` 字段时必须默认 `"claude"`，保证向后兼容（grep `config/models.yaml` 全文）。
 - pydantic `TierConfig.adapter: str = "claude"` 要记得测试这个 default。
+
+**完成记录**：registry + fail-fast + 注入链 + 启动 gate 全部就位 —
+`harness/adapters/__init__.py` 新增 `ADAPTER_REGISTRY = {"claude": ClaudeAdapter}`；
+opencode/codex stub 按 spec "注册过的 adapter 必须能跑" 规则**不**进入 registry（保持
+死 stub 状态，真实接口实现后单独任务注册）。`TierConfig.adapter: str = "claude"` 默认值
+保向后兼容（现有 yaml 无此字段仍可用）；`ModelSpec.adapter: Optional[str] = None` 沿
+resolve / env 覆盖两条路径传透。`ModelRouter._load_config` 遍历所有 tier，
+`tier.adapter not in ADAPTER_REGISTRY` 即抛 `ValueError` 含**类名** + **可用列表**便于
+诊断。`Pipeline.__init__` 新增 `adapter_resolver: Callable[[str], AdapterBase]` 形参，
+默认闭包从 `ADAPTER_REGISTRY` 取 — 现有 `adapter=ClaudeAdapter()` 调用零修改。
+`__main__.py` 新增 `--validate-config` flag：加载 + 校验，0/非 0 退出码，永不触网。
+`docs/ADAPTER.md` 追加 "Registering a new adapter (T32 contract)" 6 步签约。
+14 新增在 `tests/test_t32_adapter_factory.py` (349 行)，全量 574 passed / 2 deselected，
+覆盖率 84%+。`pipeline.py` 752→805（超 5 行，留给 T36 拆文件解决）。
 
 ---
 
