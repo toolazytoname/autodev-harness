@@ -325,40 +325,6 @@ class UIPhase:
                         "slop blocker(s); T09 visual reviewer will gate."
                     )
 
-    def _ask_version_choice(self, num_versions: int) -> tuple[str, str]:
-        """Prompt the human for a version choice.
-
-        T23: consumption is instance-scoped on the Pipeline; env
-        vars themselves stay untouched so other Pipelines / tests
-        see a clean env.
-        """
-        env_choice = os.environ.get(EnvVars.UI_CHOICE, "").strip()
-        env_feedback = os.environ.get(EnvVars.UI_FEEDBACK, "")
-
-        if not _is_interactive():
-            consumed = self._p._consumed_feedback
-            if env_choice and EnvVars.UI_CHOICE not in consumed:
-                consumed.add(EnvVars.UI_CHOICE)
-                return env_choice, ""
-            if env_feedback and EnvVars.UI_FEEDBACK not in consumed:
-                consumed.add(EnvVars.UI_FEEDBACK)
-                return "", env_feedback
-            return "accept_first", ""
-
-        prompt = (
-            f"Choose 1-{num_versions}, type feedback to regenerate all, "
-            "or press Enter to accept #1: "
-        )
-        try:
-            raw = input(prompt).strip()
-        except EOFError:
-            return "accept_first", ""
-        if not raw:
-            return "accept_first", ""
-        if raw in {str(i) for i in range(1, num_versions + 1)}:
-            return raw, ""
-        return "", raw
-
     def _render_all_directions(
         self,
         directions: list[dict[str, str]],

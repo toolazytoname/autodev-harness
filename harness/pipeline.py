@@ -355,49 +355,6 @@ class Pipeline:
         self._router.record(stage, result.usage)
         return result
 
-    def _call_ui_direction(
-        self,
-        direction: dict[str, str],
-        plan_text: str,
-        previous_spec: str = "",
-        user_feedback: str = "",
-    ) -> AgentResult:
-        """Run the ui_design agent for one specific aesthetic direction."""
-        ui_spec = PHASE_SPECS[Phase.UI]
-        if ui_spec.stage is None or ui_spec.agent is None:
-            raise PipelineError("UI phase spec is missing stage/agent metadata")
-        stage = ui_spec.stage
-        spec = self._router.resolve(stage)
-        agent_prompt = _read_agent_prompt(self._agents_dir, ui_spec.agent)
-        three_piece = self._load_three_piece_baseline()
-        style_module = self._load_style_module(direction["module"])
-
-        context_extra = ""
-        if previous_spec:
-            context_extra += f"\n\n---PREVIOUS SPEC---\n{previous_spec}"
-        if user_feedback:
-            context_extra += f"\n\n---USER FEEDBACK---\n{user_feedback}"
-
-        prompt = _build_ui_prompt(
-            base_prompt=agent_prompt,
-            plan_text=plan_text + context_extra,
-            direction=direction,
-            three_piece_text=three_piece,
-            style_module_text=style_module,
-        )
-
-        result = self._adapter.run(
-            prompt,
-            model=spec.model,
-            cwd=self._config.project_dir,
-            timeout=PHASE_TIMEOUT_SECONDS,
-            base_url=spec.base_url,
-            api_key=self._api_key_for(spec.tier),
-            fallback_model=spec.fallback,
-        )
-        self._router.record(stage, result.usage)
-        return result
-
     def _save_state(self, current: Phase, completed: list[Phase]) -> None:
         state = WorkflowState(
             project_dir=self._config.project_dir,

@@ -334,10 +334,26 @@ def _cancel_at(job_id: str) -> bool:
 def _register_sleeper(at: datetime, command: str, job_id: str) -> None:
     """Last-resort sleeper.
 
-    Spawns a detached ``nohup`` process that sleeps until ``at`` and
-    then execs ``command``. Still zero-token because the sleeper
-    doesn't make any LLM call — it just holds the wake-up.
+    Spawns a detached process that sleeps until ``at`` and then execs
+    ``command``. Still zero-token because the sleeper doesn't make any
+    LLM call — it just holds the wake-up.
+
+    Requires ``os.fork`` (POSIX). On hosts without fork (Windows) we
+    fail loud with :class:`NotImplementedError` so the operator
+    installs a real scheduler backend (launchd / systemd / at)
+    rather than silently blocking the parent process.
     """
+    # T35 fail-fast: a missing fork on a non-POSIX host used to fall
+    # into the ``pid == 0`` branch and run time.sleep + os.system
+    # *in the parent*, blocking the harness indefinitely. Refuse
+    # instead.
+    if not hasattr(os, "fork"):
+        raise NotImplementedError(
+            "sleeper backend requires POSIX fork(); please install "
+            "launchd (macOS) / systemd --user timer (Linux) or `at` "
+            "as the wake-up scheduler instead."
+        )
+
     from datetime import timezone
     import time
 
@@ -346,7 +362,7 @@ def _register_sleeper(at: datetime, command: str, job_id: str) -> None:
 
     # Detach the sleeper from the parent process so quitting the
     # harness doesn't kill the wake-up.
-    pid = os.fork() if hasattr(os, "fork") else 0
+    pid = os.fork()
     if pid == 0:
         # Child: redirect stdio, sleep, exec.
         try:
@@ -356,7 +372,10 @@ def _register_sleeper(at: datetime, command: str, job_id: str) -> None:
                 os.dup2(devnull_out.fileno(), 1)
                 os.dup2(devnull_out.fileno(), 2)
             time.sleep(seconds)
-            os.system(command)  # noqa: S605 — sleeper is best-effort
+            # T35: subprocess.Popen with a list (no shell) instead of
+            # os.system. Avoids shell-quoting hazards on paths with
+            # spaces or special characters.
+            subprocess.Popen(command, shell=False)  # noqa: S603
         finally:
             os._exit(0)
 
@@ -366,36 +385,6 @@ def _cancel_sleeper(job_id: str) -> bool:
     # a cancellation here is a no-op. The launchd / systemd path
     # is the real safety net on hosts that have them.
     return False
-
-
-_DISPATCH: dict[SchedulerBackend, Callable[[datetime, str, str], None]] = {
-    SchedulerBackend.LAUNCHD: _register_launchd,
-    SchedulerBackend.SYSTEMD: _register_systemd,
-    SchedulerBackend.AT: _register_at,
-    SchedulerBackend.SLEEPER: _register_sleeper,
-}
-
-_CANCEL_DISPATCH: dict[SchedulerBackend, Callable[[str], bool]] = {
-    SchedulerBackend.LAUNCHD: _cancel_launchd,
-    SchedulerBackend.SYSTEMD: _cancel_systemd,
-    SchedulerBackend.AT: _cancel_at,
-    SchedulerBackend.SLEEPER: _cancel_sleeper,
-}
-
-
-_DISPATCH: dict[SchedulerBackend, Callable[[datetime, str, str], None]] = {
-    SchedulerBackend.LAUNCHD: _register_launchd,
-    SchedulerBackend.SYSTEMD: _register_systemd,
-    SchedulerBackend.AT: _register_at,
-    SchedulerBackend.SLEEPER: _register_sleeper,
-}
-
-_CANCEL_DISPATCH: dict[SchedulerBackend, Callable[[str], bool]] = {
-    SchedulerBackend.LAUNCHD: _cancel_launchd,
-    SchedulerBackend.SYSTEMD: _cancel_systemd,
-    SchedulerBackend.AT: _cancel_at,
-    SchedulerBackend.SLEEPER: _cancel_sleeper,
-}
 
 
 # ---------------------------------------------------------------------------
