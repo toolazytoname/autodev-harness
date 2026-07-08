@@ -553,7 +553,6 @@ class TestCli:
 
 class TestPipelineSmoke:
     @pytest.mark.slow
-    @pytest.mark.skip(reason="T07 acceptance smoke — needs real claude CLI; run manually")
     def test_test_mode_todo_app(self, tmp_path):
         """`python -m harness --test tmp -- '做一个 TODO web app'` full run."""
         from harness.__main__ import main

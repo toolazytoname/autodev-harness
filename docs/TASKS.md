@@ -1028,6 +1028,16 @@ assert `result.usage is not None` 已与 spec 等价（smoke 是 slow 标记不�
 - 不要"凑"覆盖率——若 router/score_card/artifacts 三个月内低于 90%，写 task 让它升，**不要**把 target 改成 85%。
 - T38 commit 应是**最后一个合并 commit**（README + MASTER-PLAN + tests）。
 
+### T39 [MED] focus-module coverage 提升（score_card / artifacts）  ⏳
+
+> 由 T38 surfaced 的 follow-up。两条 `xfail(strict=False)` 在
+> `tests/test_t38_acceptance.py::TestFocusModuleCoverage` 等待分数升 90%。
+> **不允许**把 90% 阈值降到 85%——T38 spec 铁律。
+
+- [ ] `harness/score_card.py` 当前 ~62% → ≥ 90%：补全 schema 校验失败 / 评分卡重构 / serialize 等分支的单测。
+- [ ] `harness/artifacts.py` 当前 ~70% → ≥ 90%：补 workflow-state 恢复、`complete_task` 边界（依赖环、已 blocked 任务再 complete 等）。
+- [ ] 把 T38 的两条 `xfail` 改成正常断言，CI 必须绿。
+
 ---
 
 ## 给执行模型的执行协议（EXECUTOR PROTOCOL — 开工前必读）
