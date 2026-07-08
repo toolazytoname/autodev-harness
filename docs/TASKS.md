@@ -370,7 +370,7 @@ stub 的 `NotImplementedError` 文案明确点名类名便于诊断。
 > 来源：2026-07-08 三轮架构审查。所有 `file:line` 在动手前 **必须 grep 核对**
 > （指令："可能已漂移"），下面给出 `grep` 验证锚点。
 
-### T28 [CRITICAL] 合并冲突污染仓库 + worktree 超时未捕获  ⏳
+### T28 [CRITICAL] 合并冲突污染仓库 + worktree 超时未捕获  ✅ 2026-07-08
 **内容**：两处都会在真实运行中触发，且在 worktree 层做错就连锁污染主仓库
 所有后续任务合并。具体证据与定位锚点：
 
@@ -407,6 +407,23 @@ stub 的 `NotImplementedError` 文案明确点名类名便于诊断。
 - `grep -n 'merge --abort' harness/worktree.py` **必须**返回非零行。
 - 全量 `pytest -m "not slow"` 仍 523 passed / 2 skipped。
 - 单独建一个真冲突 case（无需 merged 也能触发）→ 跑 `git status` 干净。
+**完成记录**：`merge_worktree` 的 `except InnerLoopError` 分支在 re-raise 前调
+`_try_merge_abort(project_dir)`（新私有方法，`subprocess.run(["git","merge","--abort"],
+cwd=project_dir, capture_output=True, check=False)`）——`check=False` 因为 abort
+在已无冲突可 abort 时返回 1，不能让它把原始 merge 异常覆盖；`get_worktree_diff` /
+`get_worktree_files` 的 `except subprocess.CalledProcessError` 拓宽为
+`except (subprocess.CalledProcessError, subprocess.TimeoutExpired)`，30s 真超时不再
+冒泡穿透 `_collect_review_context` 致整 inner loop 崩盘。3 个 RED 测
+(`test_conflict_aborts_and_cleans_repo` / `test_diff_timeout_returns_empty` /
+`test_files_timeout_returns_empty`) 全数转绿，其中冲突测试用真实 git
+冲突（不同分支改 a.txt 同一行）+ spy `subprocess.run` 验 `--abort` 调用且
+`cwd == project_dir` + `check is False` + post `git status --porcelain` 空 +
+`MERGE_HEAD` 不存在。全量 **526 passed** / 2 skipped（基线 523 + T28 3 新），
+覆盖率 84%，`harness/worktree.py` 91%（6 miss 是 `_run_git` 的
+CalledProcessError/TimeoutExpired 分支未直接走，T26 之后一直如此）。`merge --abort`
+在 harness/worktree.py 出现 4 次（3 处文档 + 1 处真实 subprocess 调用 line 183）。
+新增 tests/test_t28_merge_abort_on_conflict.py 232 行；harness/worktree.py
+207→243 行（仍 < 800）。
 
 **坑点**：
 - merge --abort 在从没冲突时返回 1 → 用 `check=False` 容忍，别让 abort 失败把主流程炸了。

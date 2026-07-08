@@ -148,7 +148,15 @@ def merge_worktree(
     try:
         _run_git("merge", "--no-ff", branch_name, cwd=project_dir)
     except InnerLoopError:
-        # Best-effort: surface a clear error; orchestrator decides what to do.
+        # T28 — CRITICAL: must abort any in-progress merge so the main
+        # repo is not left in MERGING state. The next ``_on_gate_pass``
+        # call would fail at ``git checkout target`` (git refuses to
+        # switch branches with unmerged entries) and silently poison
+        # every subsequent task merge in the develop phase.
+        # ``check=False`` because ``merge --abort`` returns 1 when
+        # there is nothing to abort — that must not mask the original
+        # merge error we are about to re-raise.
+        _try_merge_abort(project_dir)
         raise
     finally:
         # Always attempt to remove the worktree dir, even on merge failure
@@ -156,6 +164,27 @@ def merge_worktree(
             _run_git("worktree", "remove", str(worktree_path), cwd=project_dir)
         except InnerLoopError:
             pass
+
+
+def _try_merge_abort(project_dir: Path) -> None:
+    """Best-effort ``git merge --abort`` to leave the main repo clean.
+
+    Called only from the error path in ``merge_worktree``. We deliberately
+    swallow any error here — the caller is already on a failure path, the
+    original exception is what the orchestrator needs to see, and a failed
+    abort must not mask it.
+
+    ``check=False`` because ``git merge --abort`` exits 1 when there is
+    nothing to abort (e.g. caller invented the error, or a prior abort
+    already ran). Both outcomes — abort succeeded, abort had nothing to
+    do — are acceptable from our caller's perspective.
+    """
+    subprocess.run(
+        ["git", "merge", "--abort"],
+        cwd=project_dir,
+        capture_output=True,
+        check=False,
+    )
 
 
 def get_worktree_diff(
@@ -179,7 +208,12 @@ def get_worktree_diff(
             timeout=30,
         )
         return proc.stdout
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # T28 — broaden except to also catch TimeoutExpired. The 30s
+        # timeout here is real and a slow ``git diff`` (large worktrees)
+        # used to bubble up through ``_collect_review_context`` →
+        # ``_run_iteration`` and crash the entire inner loop. We treat
+        # it the same as a non-zero exit: empty diff, loop continues.
         return ""
 
 
@@ -203,5 +237,7 @@ def get_worktree_files(
             timeout=30,
         )
         return [f for f in proc.stdout.splitlines() if f]
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # T28 — broaden except to also catch TimeoutExpired. See
+        # ``get_worktree_diff`` for the rationale.
         return []
