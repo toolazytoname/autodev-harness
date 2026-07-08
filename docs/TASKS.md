@@ -725,7 +725,7 @@ F401/F811 / `scripts/*` 放 E402) + `[tool.ruff.format]` (双引号 + space inde
 
 ---
 
-### T34 [MED] 魔数收敛 + 重试/退避统一  ⏳
+### T34 [MED] 魔数收敛 + 重试/退避统一  ✅ 2026-07-08
 **内容**：timeout / retry 魔数散落 6+ 文件，无统一来源；三 agent 一致指出重试循环
 不一致，且忽略 `Retry-After` / 无 jitter。
 
@@ -779,6 +779,21 @@ F401/F811 / `scripts/*` 放 E402) + `[tool.ruff.format]` (双引号 + space inde
 - 收紧超时（如把 600s 改成 60s）属**行为变更**——本任务只搬位置不改大小，除非 magic-number 在测试外被反复踩到。
 - `random.uniform` 在 CI 上不能种子化——不写 `random.seed`。
 - 不要碰 T21 / 预算相关字段（与 T29 拍板关系密切）。
+
+**完成记录**：三块全部落地 — 新建 `config/resilience.yaml`(47 行) 三段 timeouts/retry/quota
+平铺所有原散落魔数（默认与原值一致 → 行为不变）；新建 `harness/resilience.py`(170 行)
+含 `ResilienceConfig` pydantic 顶层 + `TimeoutsConfig` / `RetryConfig` / `QuotaConfig` 三段，
+`load_resilience_config(path)` + `_apply_env_overrides` + `get_resilience_config()` /
+`reset_resilience_cache()`；env 覆盖约定 `AUTODEV_<SECTION>_<FIELD>` 大写，缺文件回默认
+（启动不因 typo 挂）。`harness/adapters/base.py::_backoff_delay` 加 keyword 形参
+`retry_after_seconds` / `base_delay` / `max_delay` / `jitter_ratio`：provider hint 优先于
+exponential 调度（clamp 到 `max_delay`）；jitter `uniform(-r, +r) * base`，默认从
+`get_resilience_config().retry.jitter_ratio` 取（启动顺序正确）。`_run_with_retry` 转发
+异常的 `retry_after_seconds` 属性。11 新增在 `tests/test_t34_resilience.py` (244 行)，
+覆盖 config load / env 优先级 / retry-after 三类用法 / jitter ≥5 区分 / ±ratio 边界 /
+yaml 与 loader 导出。全量 585 passed / 2 deselected，覆盖率 84%+。`base.py` 507→521
+（仅 14 行新增）。6+ 调用方迁移到 `ResilienceConfig` 留给后续任务（本任务只搬位置
+不改大小 / 不顺手重构）。
 
 ---
 
