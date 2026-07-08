@@ -26,6 +26,7 @@ from harness.adapters.base import (
     AdapterError,
     AgentResult,
     InvalidResponseError,
+    QuotaExhaustedError,
     RateLimitError,
     ServerError,
     TimeoutError,
@@ -41,10 +42,23 @@ from harness.adapters.json_envelope import (
     strip_code_fence as _strip_code_fence,
 )
 from harness.quota import (
-    QuotaExhaustedError,
     QuotaSignal,
     classify_quota_error,
     load_quota_config,
+)
+
+# T36: error classification extracted to claude_errors; re-exported
+# with the same (private) names so existing call-sites and tests
+# that patch ``harness.adapters.claude._RATE_LIMIT_RE`` still work.
+from harness.adapters.claude_errors import (  # noqa: F401  (re-export)
+    _5XX_RE,
+    _RATE_LIMIT_RE,
+    _STRUCTURED_ERROR_KEYS,
+    classify_error as _classify_error_impl,
+    classify_from_structured as _classify_from_structured_impl,
+    classify_quota as _classify_quota_impl,
+    extract_structured_error as _extract_structured_error_impl,
+    quota_error as _quota_error_impl,
 )
 
 
@@ -461,7 +475,7 @@ class ClaudeAdapter(AdapterBase):
         return _parse_usage(data, duration_ms)
 
     # ------------------------------------------------------------------
-    # Error classification (T20)
+    # Error classification (T20/T36: implementation in claude_errors)
     # ------------------------------------------------------------------
 
     def _classify_error(
@@ -470,164 +484,34 @@ class ClaudeAdapter(AdapterBase):
         stdout: str,
         exit_code: int,
     ) -> Optional[AdapterError]:
-        """Classify subprocess output into a retryable error type.
-
-        Returns
-        -------
-        Optional[AdapterError]
-            - ``QuotaExhaustedError`` for usage-limit / balance signals
-              (T16a — NOT retried; T16c/T16d downgrade or suspend).
-            - ``RateLimitError`` for 429 / rate-limit signals
-            - ``ServerError`` for 5xx upstream signals
-            - ``None`` if no retryable error is detected — caller should
-              fall through to the normal exit_code / JSON parse path.
-
-        Order of preference (T20):
-        1. **Structured JSON** envelope from ``--output-format json`` —
-           preferred because it carries a real ``status_code`` instead of
-           guesswork from text.
-        2. **Word-boundary substring** fallback on stderr — robust against
-           "429" or "500" appearing in paths, token counts, or line numbers
-           (the bug the old bare ``"429" in stderr`` matcher had).
-
-        Quota check (T16a) runs first across stderr + structured error
-        text — quota signals are terminal even when they share
-        ``status_code == 429`` with transient rate-limit responses.
-        """
-        structured = self._extract_structured_error(stdout)
-        if structured is not None:
-            classified = self._classify_from_structured(structured)
-            if classified is not None:
-                return classified
-
-        # T16a — quota check comes before generic 429 detection so a
-        # quota-exhausted 429 isn't mis-classified as a transient rate
-        # limit and burned through retry budget.
-        quota_signal = self._classify_quota(stderr, stdout)
-        if quota_signal is not None:
-            return self._quota_error(quota_signal, stderr)
-
-        # Word-boundary substring fallback on stderr.
-        if _RATE_LIMIT_RE.search(stderr):
-            return RateLimitError(
-                f"rate-limit signal in stderr: {stderr.strip()[:200]}"
-            )
-        if _5XX_RE.search(stderr):
-            return ServerError(
-                f"5xx signal in stderr: {stderr.strip()[:200]}"
-            )
-
-        return None
+        """T36 thin delegate. Implementation lives in
+        :mod:`harness.adapters.claude_errors`. The class-method form
+        is kept so existing call-sites (``self._classify_error(...)``)
+        continue to work without touching the call-graph."""
+        return _classify_error_impl(
+            stderr, stdout, exit_code, self.RETRY_SERVER_ERROR_CODES
+        )
 
     def _classify_quota(
         self,
         stderr: str,
         stdout: str,
     ) -> Optional[QuotaSignal]:
-        """Run the T16a quota matchers across both stderr and stdout.
-
-        Some providers write the error text into the structured JSON
-        envelope (``stdout``) and a free-form description into ``stderr``;
-        checking both means we don't depend on which side it lands on.
-
-        T30 — provider is no longer hardcoded. We iterate every provider
-        declared in ``_QUOTA_CONFIG`` (anthropic, MiniMax, ...) and use
-        the first match. The previous hardcoded ``provider="anthropic"``
-        meant the worker-tier (MiniMax) rules in ``config/quota.yaml``
-        never fired and MiniMax quota events were mis-classified as
-        generic 429s that burned the retry budget.
-        """
-        for text in (stderr, stdout):
-            if not text:
-                continue
-            for provider_name in _QUOTA_CONFIG.providers:
-                signal = classify_quota_error(
-                    text,
-                    provider=provider_name,
-                    config=_QUOTA_CONFIG,
-                )
-                if signal is not None:
-                    return signal
-        return None
+        """T36 thin delegate. See :mod:`harness.adapters.claude_errors`."""
+        return _classify_quota_impl(stderr, stdout)
 
     def _quota_error(
         self,
         signal: QuotaSignal,
         stderr: str,
     ) -> QuotaExhaustedError:
-        """Build a QuotaExhaustedError from a matched signal.
-
-        ``tier`` is filled in by the outer pipeline (the adapter does
-        not know which tier triggered the call) — see
-        ``AdapterBase.run`` for the post-creation tier attachment.
-        """
-        return QuotaExhaustedError(
-            f"quota exhausted for provider '{signal.provider}': "
-            f"{stderr.strip()[:200]}",
-            provider=signal.provider,
-            reset_hint=signal.reset_hint,
-            retry_after_seconds=signal.retry_after_seconds,
-        )
+        """T36 thin delegate. See :mod:`harness.adapters.claude_errors`."""
+        return _quota_error_impl(signal, stderr)
 
     def _classify_from_structured(self, data: dict) -> Optional[AdapterError]:
-        """Build a retryable error from a parsed JSON error envelope."""
-        status = data.get("status_code")
-        is_error = data.get("is_error", False)
-        error_text = str(data.get("error") or data.get("error_type") or "")
-
-        if not (is_error or error_text):
-            return None
-
-        # Numeric status code is the strongest signal.
-        if isinstance(status, int):
-            if status == 429 or (
-                400 <= status < 500 and _RATE_LIMIT_RE.search(error_text)
-            ):
-                return RateLimitError(
-                    f"rate limit from structured output: {error_text[:200]}"
-                )
-            if status in self.RETRY_SERVER_ERROR_CODES or 500 <= status < 600:
-                return ServerError(
-                    f"server error {status} from structured output: "
-                    f"{error_text[:200]}"
-                )
-            # Other 4xx are non-retryable — let the caller decide.
-            return None
-
-        # No numeric status; fall back to text matching.
-        if _RATE_LIMIT_RE.search(error_text) or "rate_limit" in error_text.lower():
-            return RateLimitError(
-                f"rate limit from structured output: {error_text[:200]}"
-            )
-        if _5XX_RE.search(error_text):
-            return ServerError(
-                f"5xx signal in structured error: {error_text[:200]}"
-            )
-        return None
+        """T36 thin delegate. See :mod:`harness.adapters.claude_errors`."""
+        return _classify_from_structured_impl(data, self.RETRY_SERVER_ERROR_CODES)
 
     def _extract_structured_error(self, stdout: str) -> Optional[dict]:
-        """Return the error-relevant fields of a JSON envelope, or None.
-
-        A "structured error envelope" is a JSON object containing at least
-        one of ``is_error / error / status_code / error_type``. Plain
-        success envelopes (``{"result": "...", "usage": {...}}``) return
-        None so the caller skips the structured-error branch.
-        """
-        text = stdout.strip()
-        if not text:
-            return None
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            text = _strip_code_fence(text)
-            try:
-                data = json.loads(text)
-            except json.JSONDecodeError:
-                data = _extract_json(text)
-                if data is None:
-                    return None
-        if not isinstance(data, dict):
-            return None
-        if not any(k in data for k in _STRUCTURED_ERROR_KEYS):
-            return None
-        return data
+        """T36 thin delegate. See :mod:`harness.adapters.claude_errors`."""
+        return _extract_structured_error_impl(stdout)

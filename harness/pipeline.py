@@ -186,53 +186,14 @@ class PipelineConfig:
     log: Callable[[str], None] = print
 
 
-def _read_agent_prompt(agents_dir: Path, agent_name: str) -> str:
-    """Load an agent's markdown prompt, failing clearly when missing."""
-    path = agents_dir / f"{agent_name}.md"
-    if not path.exists():
-        raise PipelineError(f"Agent prompt not found: {path}")
-    return path.read_text()
-
-
-def _read_bundle_skill(bundle_path: Path, *relative_parts: str) -> str:
-    """Load one skill from skills-bundle; raises PipelineError if missing."""
-    path = bundle_path.joinpath(*relative_parts, "SKILL.md")
-    if not path.exists():
-        raise PipelineError(f"Bundled skill missing: {path}")
-    return path.read_text()
-
-
-def _build_prompt(agent_prompt: str, input_text: str) -> str:
-    """Append input context to an agent prompt, matching the bash convention."""
-    return f"{agent_prompt}\n\n---INPUT---\n{input_text}\n"
-
-
-def _build_ui_prompt(
-    base_prompt: str,
-    plan_text: str,
-    direction: dict[str, str],
-    three_piece_text: str,
-    style_module_text: str,
-) -> str:
-    """Assemble a per-direction ui_design prompt.
-
-    The base prompt lives in agents/ui-design.md and tells the model how
-    to respond (markers, structure, rules). The directional context
-    (PLAN + DIRECTION + STYLE MODULE + 3-PIECE BASELINE) is appended in
-    the order ui-design.md expects in its 'Input' section.
-    """
-    module_block = (
-        "---STYLE MODULE PROMPT---\n(none — use only the three-piece baseline)"
-        if direction["module"] == "(none)"
-        else f"---STYLE MODULE PROMPT---\n{style_module_text}"
-    )
-    context = (
-        f"---PLAN---\n{plan_text}\n\n"
-        f"---AESTHETIC DIRECTION---\n{direction['slug']}\n\n"
-        f"{module_block}\n\n"
-        f"---THREE-PIECE BASELINE---\n{three_piece_text}\n"
-    )
-    return _build_prompt(base_prompt, context)
+# T36: prompt helpers moved to harness.prompts; re-exported below for
+# back-compat (existing tests patch ``harness.pipeline._read_agent_prompt``).
+from harness.prompts import (  # noqa: F401  (re-export)
+    _build_prompt,
+    _build_ui_prompt,
+    _read_agent_prompt,
+    _read_bundle_skill,
+)
 
 
 # ``extract_ui_output`` moved to harness.ui_phase (T24); re-exported above.
@@ -541,98 +502,27 @@ class Pipeline:
         return path
 
     def phase_develop(self) -> None:
-        self._log("━━━ Phase: develop ━━━")
-        project_dir = self._config.project_dir
+        """T36 thin delegate. Implementation lives in
+        :class:`harness.develop_phase.DevelopPhase`. The method on
+        ``Pipeline`` is kept for the public surface (and any test
+        that patches it by name)."""
+        from harness.develop_phase import DevelopPhase
 
-        spec_text = read_artifact(project_dir, "006-ui-spec") or ""
-        plan_text = read_artifact(project_dir, "002-plan") or ""
-        full_spec = f"{plan_text}\n\n{spec_text}".strip()
-        if not full_spec:
-            raise PipelineError("No plan/spec artifacts found — cannot develop")
-
-        loop_config = LoopConfig(
-            max_iterations=self._config.max_iterations,
-            pass_threshold=self._config.pass_threshold,
-        )
-
-        while True:
-            queue = read_task_queue(project_dir)
-            if queue is None:
-                raise PipelineError("003-task-queue.json not found — run tasks first")
-
-            task = self._next_runnable_task(queue)
-            if task is None:
-                break
-
-            self._log(f"▶ Task {task.id}: {task.title}")
-            # Mirror the start to Linear (no-op for unknown keys).
-            self._linear_sync.mark_in_progress(task.id)
-            try:
-                cards = run_inner_loop(
-                    project_dir=project_dir,
-                    task_id=task.id,
-                    spec_text=full_spec,
-                    task_kind=task.kind,
-                    adapter=self._adapter,
-                    router=self._router,
-                    config=loop_config,
-                )
-                self._log(f"✅ Task {task.id} passed gate and merged")
-                # Gate pass → DONE with score card summary in the comment.
-                try:
-                    summary = _summarize_cards_for_linear(cards)
-                    self._linear_sync.mark_done(task.id, summary)
-                except Exception as e:
-                    self._log(f"[Linear] mark_done failed: {e}")
-            except EscalationError as exc:
-                self._log(f"🛑 Task {task.id} escalated after {exc.iter_count} iterations")
-                self._mark_task_blocked(task.id)
-                # Escalation → BLOCKED with the blockers in the comment.
-                try:
-                    blockers = _extract_blockers_from_cards(exc.cards)
-                    self._linear_sync.mark_blocked(task.id, blockers)
-                except Exception as e:
-                    self._log(f"[Linear] mark_blocked failed: {e}")
-            except InnerLoopError as exc:
-                self._log(f"🛑 Task {task.id} failed: {exc}")
-                self._mark_task_blocked(task.id)
-                try:
-                    self._linear_sync.mark_blocked(
-                        task.id, [f"inner loop error: {exc}"]
-                    )
-                except Exception as e:
-                    self._log(f"[Linear] mark_blocked failed: {e}")
-
-        queue = read_task_queue(project_dir)
-        blocked = [t.id for t in (queue.tasks if queue else []) if t.status == TaskStatus.BLOCKED]
-        if blocked:
-            self._log(f"Develop finished with blocked tasks awaiting arbitration: {blocked}")
-        else:
-            self._log("All tasks completed ✅")
+        DevelopPhase(self).run()
 
     def _next_runnable_task(self, queue) -> Optional[Task]:
-        """First pending task whose dependencies are completed and not blocked."""
-        completed = {t.id for t in queue.tasks if t.status == TaskStatus.COMPLETED}
-        blocked = {t.id for t in queue.tasks if t.status == TaskStatus.BLOCKED}
-        for task in queue.tasks:
-            if task.status != TaskStatus.PENDING:
-                continue
-            deps = task.dependencies or []
-            if any(d in blocked for d in deps):
-                continue  # dependent on a blocked task — skip
-            if all(d in completed for d in deps):
-                return task
-        return None
+        """T36 thin delegate. Implementation lives in
+        :class:`harness.develop_phase.DevelopPhase`."""
+        from harness.develop_phase import DevelopPhase
+
+        return DevelopPhase(self)._next_runnable_task(queue)
 
     def _mark_task_blocked(self, task_id: str) -> None:
-        queue = read_task_queue(self._config.project_dir)
-        if queue is None:
-            return
-        new_tasks = [
-            t.model_copy(update={"status": TaskStatus.BLOCKED}) if t.id == task_id else t
-            for t in queue.tasks
-        ]
-        write_task_queue(self._config.project_dir, TaskQueue(tasks=new_tasks))
+        """T36 thin delegate. Implementation lives in
+        :class:`harness.develop_phase.DevelopPhase`."""
+        from harness.develop_phase import DevelopPhase
+
+        DevelopPhase(self)._mark_task_blocked(task_id)
 
     # ------------------------------------------------------------------
     # Orchestration
