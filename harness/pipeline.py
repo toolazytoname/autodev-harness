@@ -37,7 +37,7 @@ from harness.env import EnvVars, api_key_for
 from harness.inner_loop import EscalationError, InnerLoopError, LoopConfig, run_inner_loop
 from harness.logging_setup import get_logger
 from harness.quota_hold import enter_quota_hold  # T16e: wired through Pipeline._run_phase_with_quota_guard
-from harness.router import ModelRouter
+from harness.router import BudgetExceeded, ModelRouter
 from harness.score_card import extract_json_from_fenced
 
 _log = get_logger(__name__)
@@ -315,6 +315,12 @@ class Pipeline:
                 "has no agent prompt to call"
             )
         stage = phase_spec.stage
+        # T29 — refuse to dispatch a new model call when the tier is
+        # already past its configured stop_at cap. The check runs BEFORE
+        # we hand a prompt to the adapter so a runaway run cannot
+        # silently burn past the per-tier budget. ``BudgetExceeded``
+        # propagates up through ``__main__`` (mapped to exit 137).
+        self._router.check_budget(stage)
         spec = self._router.resolve(stage)
         agent_prompt = _read_agent_prompt(self._agents_dir, phase_spec.agent)
         prompt = _build_prompt(agent_prompt, input_text)

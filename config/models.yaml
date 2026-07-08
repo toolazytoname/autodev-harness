@@ -16,21 +16,31 @@ tiers:
   architect:
     model: claude-opus-4-8
     fallback: claude-sonnet-4-6
+    # T29: absolute per-tier token cap. warn_at/stop_at percent below
+    # are computed against this number. Tune via AUTODEV_BUDGET_ARCHITECT
+    # env var if a single project needs a different cap.
+    max_tokens: 2000000
 
   # reviewer: Sonnet档 — 评审需要判断力但不需要顶级架构能力
   reviewer:
     model: claude-sonnet-4-6
     fallback: claude-haiku-4-5-20251001
+    max_tokens: 5000000
 
   # worker: MiniMax/Haiku/GLM 等便宜档 — generate/修复/文档/research摘要
   worker:
     model: MiniMax-M2.7
     base_url: https://api.minimaxi.com/anthropic
     fallback: claude-haiku-4-5-20251001
+    max_tokens: 10000000
 
-# Budget thresholds per tier (MASTER-PLAN §5.7)
-# When accumulated spend exceeds warn_at%, a warning is logged.
-# When it reaches stop_at%, the pipeline pauses and asks for confirmation.
+# Budget thresholds per tier (MASTER-PLAN §5.7, wired in T29).
+# ``max_tokens`` (above) is the absolute cap per tier;
+# ``warn_at_percent`` / ``stop_at_percent`` are the percent-of-cap
+# trigger points. When a tier's accumulated spend crosses
+# ``stop_at_percent`` of its cap, the next call to
+# ``router.check_budget(stage)`` raises ``BudgetExceeded`` and the
+# pipeline refuses to dispatch a new model call for that stage.
 budget:
   warn_at_percent: 80
   stop_at_percent: 100

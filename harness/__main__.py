@@ -31,6 +31,7 @@ from harness.quota_hold import (
     format_hold_status,
     read_hold,
 )
+from harness.router import BudgetExceeded
 
 
 # CLI phase names (bash-compatible) → Phase enum values handled by Phase._missing_
@@ -41,6 +42,7 @@ PHASE_CHOICES = ["research", "plan", "ui_design", "tasks", "develop"]
 EXIT_OK = 0
 EXIT_PIPELINE_ERROR = 1
 EXIT_QUOTA_ESCALATION = 2  # auto-resume cap hit — manual action required
+EXIT_BUDGET_EXCEEDED = 137  # T29 — per-tier token cap hit; operator review needed
 EXIT_INTERRUPTED = 130
 
 
@@ -205,6 +207,20 @@ def main(argv: list[str] | None = None) -> int:
     except PipelineError as exc:
         print(f"Pipeline error: {exc}", file=sys.stderr)
         return EXIT_PIPELINE_ERROR
+    except BudgetExceeded as exc:
+        # T29 — per-tier token cap hit. Distinct exit code (137) so
+        # cron / CI can tell "budget circuit tripped" apart from a
+        # generic pipeline error. Print where the cap tripped so the
+        # operator can adjust ``max_tokens`` in config/models.yaml (or
+        # the per-tier env override) and re-run.
+        print(
+            f"🛑 Budget exceeded for tier '{exc.tier}': "
+            f"{exc.spent} tokens spent against a cap of {exc.limit}. "
+            "Pipeline paused — bump max_tokens in config/models.yaml "
+            "(or via AUTODEV_BUDGET_<TIER>) and re-run.",
+            file=sys.stderr,
+        )
+        return EXIT_BUDGET_EXCEEDED
     except QuotaResumeExhaustedError as exc:
         # begin_resume() should have caught this already; this branch is a
         # safety net for any future caller that bypasses __main__.

@@ -34,13 +34,20 @@ from harness.env import EnvVars, api_key_for, base_url_for, fallback_for, model_
 
 
 class TierConfig(pydantic.BaseModel):
-    """One tier's configuration — model + optional base_url + fallback."""
+    """One tier's configuration — model + optional base_url + fallback.
+
+    T29 — ``max_tokens`` is the absolute per-tier token cap consumed by
+    :meth:`ModelRouter.check_budget`. Omit (``None``) to disable the
+    circuit breaker for a tier — useful for stages where the per-tier
+    cap doesn't make sense, or for emergency "let it run" overrides.
+    """
 
     model_config = pydantic.ConfigDict(frozen=True)
 
     model: str
     base_url: Optional[str] = None
     fallback: Optional[str] = None
+    max_tokens: Optional[int] = None
 
 
 class BudgetConfig(pydantic.BaseModel):
@@ -81,12 +88,17 @@ class ModelSpec(pydantic.BaseModel):
         The tier name this model belongs to (architect / reviewer / worker).
     fallback : str, optional
         Fallback model to use when the primary is unavailable.
+    max_tokens : int, optional
+        T29 — absolute per-tier token cap, propagated from
+        ``TierConfig.max_tokens``. ``None`` means no enforcement on this
+        tier.
     """
 
     model: str
     tier: str
     base_url: Optional[str] = None
     fallback: Optional[str] = None
+    max_tokens: Optional[int] = None
 
     model_config = pydantic.ConfigDict(frozen=True)
 
@@ -144,9 +156,17 @@ class ModelRouter:
     config_path
         Path to config/models.yaml. Defaults to config/models.yaml relative
         to the harness package root.
+
+    Notes
+    -----
+    T29 — ``check_budget(stage)`` is the actual circuit breaker (was a
+    ``pass`` block for two years). It compares the running per-tier spend
+    against ``TierConfig.max_tokens * (stop_at_percent / 100)`` and raises
+    :class:`BudgetExceeded` when the cap is hit. ``_call_agent`` in
+    :mod:`harness.pipeline` calls this *before* each model dispatch, so
+    the pipeline refuses to start a new call when the tier is exhausted.
     """
 
-    _instance: Optional["ModelRouter"] = None
     _lock = threading.Lock()
 
     def __init__(
@@ -168,6 +188,7 @@ class ModelRouter:
                 tier=tier_name,
                 base_url=spec.base_url,
                 fallback=spec.fallback,
+                max_tokens=spec.max_tokens,
             )
             for tier_name, spec in self._config.tiers.items()
         }
@@ -249,30 +270,57 @@ class ModelRouter:
     def check_budget(self, stage: str) -> None:
         """Check budget for the tier associated with this stage.
 
-        Logs a warning if spend exceeds warn_at threshold.
-        Raises BudgetExceeded if it exceeds stop_at threshold.
+        T29 — the actual circuit breaker. Compares the running per-tier
+        spend against ``TierConfig.max_tokens * (stop_at_percent / 100)``
+        and raises :class:`BudgetExceeded` when the cap is hit. Logs a
+        warning when spend crosses the ``warn_at_percent`` boundary so
+        operators see the cap approaching before it trips.
 
         Parameters
         ----------
         stage
             Stage name to check budget for.
+
+        Raises
+        ------
+        BudgetExceeded
+            If accumulated spend for the tier meets or exceeds the
+            configured stop threshold. The pipeline catches this in
+            ``_call_agent`` and refuses to dispatch a new model call,
+            so a runaway run cannot silently blow past the cap.
         """
+        from harness.logging_setup import get_logger  # local: avoid import cycle
+
         tier = self._get_tier(stage)
+        spec = self._tier_specs[tier]
+        limit = spec.max_tokens
+
+        # No cap configured for this tier — silently pass.
+        # The legacy behaviour was to silently pass anyway, but the
+        # back-compat path is now opt-in (no ``max_tokens``).
+        if limit is None or limit <= 0:
+            return
+
         with self._lock:
             total = self._budgets[tier].total_tokens
 
-        # Estimate a tier-level budget cap (placeholder until we track limits properly)
-        # We use a heuristic: for now just warn/stop based on absolute thresholds.
-        # In practice the harness pipeline should set tier limits; we use 0 as
-        # a sentinel to mean "no limit configured".  To keep the interface simple,
-        # we emit a warning when spent > warn_at * some_large_number.  For now,
-        # we don't raise — just log — until the pipeline passes real limits.
-        #
-        # NOTE: This is intentionally a no-op at the router level until the pipeline
-        # wires up real per-tier caps. The API is ready; the wiring is TBD.
-        if total > 0 and hasattr(self, "_warn_at"):
-            # Future: compare against configured tier cap here
-            pass
+        warn_threshold = int(limit * self._warn_at)
+        stop_threshold = int(limit * self._stop_at)
+
+        if total >= stop_threshold:
+            raise BudgetExceeded(tier=tier, spent=total, limit=limit)
+
+        if total >= warn_threshold:
+            get_logger(__name__).warning(
+                "budget_warn",
+                extra={
+                    "tier": tier,
+                    "spent": total,
+                    "limit": limit,
+                    "warn_threshold": warn_threshold,
+                    "stop_threshold": stop_threshold,
+                },
+            )
 
     # ---- private helpers ----
 
@@ -309,6 +357,8 @@ class ModelRouter:
                 lines.append(f"    base_url:  {spec.base_url}")
             if spec.fallback:
                 lines.append(f"    fallback:  {spec.fallback}")
+            if spec.max_tokens is not None:
+                lines.append(f"    max_tokens: {spec.max_tokens}")
             lines.append(f"    stages:    {', '.join(assigned_stages)}")
             with self._lock:
                 spent = self._budgets[tier_name].total_tokens
@@ -316,19 +366,3 @@ class ModelRouter:
                 lines.append(f"    spent:     {spent} tokens")
             lines.append("")
         return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# Usage import (forward reference for type hints)
-# ---------------------------------------------------------------------------
-
-
-class Usage(pydantic.BaseModel):
-    """Minimal Usage model — same shape as harness.adapters.base.Usage."""
-
-    model_config = pydantic.ConfigDict(frozen=True)
-
-    input_tokens: Optional[int] = None
-    output_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
-    duration_ms: Optional[int] = None

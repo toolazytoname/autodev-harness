@@ -210,7 +210,7 @@ def fake_screenshot(tmp_path):
 class TestRunVisualReview:
     def test_parses_pass_card(self, fake_screenshot, tmp_path):
         adapter = FakeAdapter(SCORE_CARD_JSON_PASS)
-        card = run_visual_review(
+        card, _usage = run_visual_review(
             adapter,
             model="claude-sonnet-5",
             spec_text="## Pages\n- /\n",
@@ -229,7 +229,7 @@ class TestRunVisualReview:
 
     def test_parses_blocker_card_and_preserves_blockers(self, fake_screenshot, tmp_path):
         adapter = FakeAdapter(SCORE_CARD_JSON_BLOCKED)
-        card = run_visual_review(
+        card, _usage = run_visual_review(
             adapter,
             model="claude-sonnet-5",
             spec_text="## Pages\n- /\n",
@@ -246,7 +246,7 @@ class TestRunVisualReview:
     def test_strips_markdown_fences(self, fake_screenshot, tmp_path):
         raw = "```json\n" + SCORE_CARD_JSON_PASS + "\n```"
         adapter = FakeAdapter(raw)
-        card = run_visual_review(
+        card, _usage = run_visual_review(
             adapter,
             model="claude-sonnet-5",
             spec_text="",
@@ -261,7 +261,7 @@ class TestRunVisualReview:
 
     def test_unparseable_returns_blocker_card(self, fake_screenshot, tmp_path):
         adapter = FakeAdapter("this response has no JSON at all")
-        card = run_visual_review(
+        card, _usage = run_visual_review(
             adapter,
             model="claude-sonnet-5",
             spec_text="",
@@ -287,7 +287,7 @@ class TestRunVisualReview:
                 raise AssertionError("non-multimodal run() should not be called by visual reviewer")
 
         adapter = NoMultimodalAdapter()
-        card = run_visual_review(
+        card, _usage = run_visual_review(
             adapter,
             model="claude-sonnet-5",
             spec_text="",
@@ -303,7 +303,10 @@ class TestRunVisualReview:
 
     def test_attachments_forwarded_to_adapter(self, fake_screenshot, tmp_path):
         adapter = FakeAdapter(SCORE_CARD_JSON_PASS)
-        run_visual_review(
+        # T29: ``run_visual_review`` now returns ``(ScoreCard, Usage)``;
+        # we ignore the return here because this test only asserts on
+        # the adapter's recorded call args.
+        _card, _usage = run_visual_review(
             adapter,
             model="claude-sonnet-5",
             spec_text="x",

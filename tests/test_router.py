@@ -14,11 +14,11 @@ import pydantic
 import pytest
 import yaml
 
+from harness.adapters.base import Usage
 from harness.router import (
     BudgetExceeded,
     ModelRouter,
     ModelSpec,
-    Usage,
     _TierBudget,
 )
 

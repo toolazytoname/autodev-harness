@@ -301,7 +301,7 @@ def _run_visual_reviewer(
 
     stage = "review.visual"
     spec = router.resolve(stage)
-    card = run_visual_review(
+    card, usage = run_visual_review(
         adapter=adapter,
         model=spec.model,
         spec_text=spec_text,
@@ -313,11 +313,11 @@ def _run_visual_reviewer(
         reviewer_prompt=prompt_path,
     )
     save_score_card(project_dir, task_id, card)
-    # The visual reviewer's token usage is harder to recover through the
-    # multimodal return path — record an empty Usage so the budget
-    # tracker does not get out of sync. Tighter accounting can land later
-    # if budget turns out to be a problem in real runs.
-    return card, Usage()
+    # T29 — propagate the multimodal adapter's real token usage so the
+    # per-tier budget counter sees the visual reviewer's spend. The
+    # legacy version returned ``Usage()`` here, which systematically
+    # undercounted UI tasks and broke the budget circuit breaker.
+    return card, usage
 
 
 def capture_ui_screenshots(

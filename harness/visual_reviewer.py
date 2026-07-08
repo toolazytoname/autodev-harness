@@ -336,8 +336,8 @@ def run_visual_review(
     iter_num: int,
     reviewer_prompt: Path,
     timeout: int = 180,
-) -> ScoreCard:
-    """Run the multimodal visual reviewer and return its score card.
+) -> tuple[ScoreCard, "Usage"]:
+    """Run the multimodal visual reviewer and return ``(score_card, usage)``.
 
     The reviewer prompt (``agents/reviewers/visual.md``) is loaded from
     disk, the screenshot paths are appended as a ``## Screenshots``
@@ -345,7 +345,16 @@ def run_visual_review(
     ``adapter.run_with_attachments``. JSON score card is parsed and
     returned; on parse failure a 0.0-score card with the parser error
     in ``evidence`` is returned so the inner loop can still gate.
+
+    T29 — the returned ``Usage`` reflects the multimodal adapter's
+    reported tokens so the per-tier budget counter sees the visual
+    reviewer's spend. The legacy version returned just the
+    :class:`ScoreCard` and ``_run_visual_reviewer`` filled in
+    ``Usage()`` (an empty placeholder), which systematically
+    undercounted UI tasks.
     """
+    from harness.adapters.base import Usage  # local: avoid cycle at module load
+
     base_prompt = reviewer_prompt.read_text() if reviewer_prompt.exists() else ""
 
     screenshot_block_lines = ["## Screenshots (in order attached)"]
@@ -388,7 +397,7 @@ def run_visual_review(
             blockers=[f"Visual reviewer unavailable: {exc}"],
             suggestions=[],
             evidence=f"adapter {type(adapter).__name__} could not run multimodal review",
-        )
+        ), Usage()
 
     raw = result.stdout or ""
     # Strip markdown fences if present; fall back to brace extraction
@@ -413,7 +422,7 @@ def run_visual_review(
                     f"raw truncated: {raw[:400]}; "
                     f"screenshots: {evidence_files}"
                 ),
-            )
+            ), result.usage
 
     # Normalise iter + reviewer. The model may forget to set them or set
     # the wrong number; we always pin iter to the iteration we called for
@@ -425,7 +434,7 @@ def run_visual_review(
         blockers=card.blockers,
         suggestions=card.suggestions,
         evidence=card.evidence,
-    )
+    ), result.usage
 
 
 def screenshots_dir_for(project_dir: Path, task_id: str) -> Path:
