@@ -14,6 +14,7 @@ retry.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -31,6 +32,13 @@ from harness.adapters.base import (
     TransientError,
     Usage,
     RETRYABLE_EXCEPTIONS,
+)
+from harness.adapters.json_envelope import (
+    extract_json as _extract_json,
+    loads_json_envelope as _loads_json_envelope,
+    parse_json_output as _parse_json_output,
+    parse_usage as _parse_usage,
+    strip_code_fence as _strip_code_fence,
 )
 from harness.quota import (
     QuotaExhaustedError,
@@ -72,7 +80,6 @@ def build_subprocess_env(
     """
     if not base_url and not api_key:
         return None
-    import os
 
     env = os.environ.copy()
     if base_url:
@@ -223,7 +230,7 @@ class ClaudeAdapter(AdapterBase):
                 f"claude exited with code {exit_code}: {stderr.strip()}"
             )
 
-        usage, result_text = self._parse_json_output(stdout, duration_ms, attempt)
+        usage, result_text = _parse_json_output(stdout, duration_ms)
 
         return AgentResult(
             stdout=result_text,
@@ -425,128 +432,33 @@ class ClaudeAdapter(AdapterBase):
         duration_ms: int,
         attempt: int,
     ) -> tuple[Usage, str]:
-        """Parse --output-format json output from claude -p.
+        """T30 — delegate to the provider-agnostic parser.
 
-        The JSON may be wrapped in a markdown code fence. We strip it if
-        present. Expected top-level shape (subject to verification per
-        the note below):
-
-        - object: ``{"result": "...", "usage": {...}}``
-        - array: ``[{"result": "...", "usage": {...}}]`` — some CLI
-          builds wrap the envelope in a one-element list. We unwrap the
-          first element when this happens.
-
-        Returns ``(Usage, result_text)``.
-
-        Raises
-        ------
-        InvalidResponseError
-            T25 — when the output is not parseable as JSON. The legacy
-            implementation silently returned the raw text, which made
-            downstream consumers believe the literal stdout was the
-            result. We treat ``--output-format json`` as a contract:
-            anything else is a broken response.
+        Kept as an instance method (with the legacy ``attempt`` arg) so
+        existing test contracts that call ``adapter._parse_json_output``
+        keep working without changes.
         """
-        text = raw_stdout.strip()
-        fence_stripped = self._strip_code_fence(text)
-
-        data = self._loads_json_envelope(fence_stripped)
-        if data is None:
-            raise InvalidResponseError(
-                "claude --output-format json returned unparseable output: "
-                f"{text[:200]!r}"
-            )
-
-        # Unwrap a one-element array envelope.
-        if isinstance(data, list):
-            if not data:
-                raise InvalidResponseError(
-                    "claude returned an empty JSON array envelope"
-                )
-            data = data[0]
-            if not isinstance(data, dict):
-                raise InvalidResponseError(
-                    "claude JSON array envelope did not contain an object: "
-                    f"{type(data).__name__}"
-                )
-
-        usage = self._parse_usage(data, duration_ms)
-
-        # Prefer the first explicitly present text field. ``data.get(x)``
-        # style fallback would swallow legitimate falsy values (e.g. an
-        # empty-string ``result``) via the ``or`` short-circuit — explicit
-        # ``in``/``is not None`` guards keep the distinction.
-        result_text = ""
-        for key in ("result", "content", "text"):
-            if key in data and data[key] is not None:
-                result_text = str(data[key])
-                break
-
-        return usage, result_text
+        return _parse_json_output(raw_stdout, duration_ms)
 
     @staticmethod
     def _loads_json_envelope(text: str):
-        """Parse ``text`` as a JSON object or array, or return ``None``.
+        """T30 delegate — see :func:`harness.adapters.json_envelope.loads_json_envelope`."""
+        return _loads_json_envelope(text)
 
-        T25 — replaces the O(n²) ``_extract_json`` progressive-slicing
-        loop with a single O(n) ``JSONDecoder.raw_decode`` walk. Also
-        handles top-level arrays, which the legacy version silently
-        rejected.
-        """
-        if not text:
-            return None
-        decoder = json.JSONDecoder()
-        # Find the first JSON value boundary. ``raw_decode`` itself
-        # tolerates leading whitespace, but we look for ``{`` or ``[``
-        # explicitly so a chatty preamble ("thinking: ... {json}") is
-        # handled cleanly without a manual scan.
-        for opener, closer in (("{", "}"), ("[", "]")):
-            start = text.find(opener)
-            if start == -1:
-                continue
-            try:
-                data, _ = decoder.raw_decode(text[start:])
-            except json.JSONDecodeError:
-                continue
-            return data
-        return None
+    @staticmethod
+    def _strip_code_fence(text: str) -> str:
+        """T30 delegate — see :func:`harness.adapters.json_envelope.strip_code_fence`."""
+        return _strip_code_fence(text)
 
-    def _strip_code_fence(self, text: str) -> str:
-        """Remove triple-backtick markdown fences from JSON output."""
-        import re
+    @staticmethod
+    def _extract_json(text: str) -> Optional[dict]:
+        """T30 delegate — see :func:`harness.adapters.json_envelope.extract_json`."""
+        return _extract_json(text)
 
-        # Remove ```json ... ``` or ``` ... ```
-        text = re.sub(r"^```json\s*\n", "", text, flags=re.MULTILINE)
-        text = re.sub(r"^```\s*\n", "", text, flags=re.MULTILINE)
-        text = re.sub(r"\n```\s*$", "", text, flags=re.MULTILINE)
-        return text.strip()
-
-    def _extract_json(self, text: str) -> Optional[dict]:
-        """Linear-time JSON object/array extractor.
-
-        T25 — was O(n²) via progressive slicing. Delegates to
-        :meth:`_loads_json_envelope` and unwraps a one-element array
-        envelope so the legacy ``dict`` return contract is preserved.
-        """
-        data = self._loads_json_envelope(text)
-        if data is None:
-            return None
-        if isinstance(data, list):
-            if not data:
-                return None
-            inner = data[0]
-            return inner if isinstance(inner, dict) else None
-        return data if isinstance(data, dict) else None
-
-    def _parse_usage(self, data: dict, duration_ms: int) -> Usage:
-        """Extract Usage from parsed JSON data."""
-        raw_usage = data.get("usage") or {}
-        return Usage(
-            input_tokens=raw_usage.get("input_tokens"),
-            output_tokens=raw_usage.get("output_tokens"),
-            total_tokens=raw_usage.get("total_tokens"),
-            duration_ms=duration_ms,
-        )
+    @staticmethod
+    def _parse_usage(data: dict, duration_ms: int) -> Usage:
+        """T30 delegate — see :func:`harness.adapters.json_envelope.parse_usage`."""
+        return _parse_usage(data, duration_ms)
 
     # ------------------------------------------------------------------
     # Error classification (T20)
@@ -617,15 +529,25 @@ class ClaudeAdapter(AdapterBase):
         Some providers write the error text into the structured JSON
         envelope (``stdout``) and a free-form description into ``stderr``;
         checking both means we don't depend on which side it lands on.
+
+        T30 — provider is no longer hardcoded. We iterate every provider
+        declared in ``_QUOTA_CONFIG`` (anthropic, MiniMax, ...) and use
+        the first match. The previous hardcoded ``provider="anthropic"``
+        meant the worker-tier (MiniMax) rules in ``config/quota.yaml``
+        never fired and MiniMax quota events were mis-classified as
+        generic 429s that burned the retry budget.
         """
         for text in (stderr, stdout):
-            signal = classify_quota_error(
-                text,
-                provider="anthropic",
-                config=_QUOTA_CONFIG,
-            )
-            if signal is not None:
-                return signal
+            if not text:
+                continue
+            for provider_name in _QUOTA_CONFIG.providers:
+                signal = classify_quota_error(
+                    text,
+                    provider=provider_name,
+                    config=_QUOTA_CONFIG,
+                )
+                if signal is not None:
+                    return signal
         return None
 
     def _quota_error(
@@ -697,11 +619,11 @@ class ClaudeAdapter(AdapterBase):
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
-            text = self._strip_code_fence(text)
+            text = _strip_code_fence(text)
             try:
                 data = json.loads(text)
             except json.JSONDecodeError:
-                data = self._extract_json(text)
+                data = _extract_json(text)
                 if data is None:
                     return None
         if not isinstance(data, dict):
