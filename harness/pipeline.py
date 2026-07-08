@@ -249,10 +249,28 @@ class Pipeline:
         agents_dir: Optional[Path] = None,
         skills_bundle_dir: Optional[Path] = None,
         linear_sync: Optional["LinearSync"] = None,
+        adapter_resolver: Optional[Callable[[str], "AdapterBase"]] = None,
     ) -> None:
         self._config = config
         self._adapter = adapter
         self._router = router or ModelRouter()
+        # T32: per-tier adapter resolution. When set, the pipeline asks
+        # the resolver for the right backend given a tier's adapter
+        # name (the value of ``TierConfig.adapter`` / ``ModelSpec.adapter``).
+        # When unset, we default to the central registry so existing
+        # single-adapter call-sites keep working.
+        if adapter_resolver is None:
+            from harness.adapters import ADAPTER_REGISTRY
+
+            def _default_resolver(name: str) -> "AdapterBase":
+                if name not in ADAPTER_REGISTRY:
+                    raise KeyError(
+                        f"no adapter registered under name {name!r}; "
+                        f"available: {sorted(ADAPTER_REGISTRY.keys())}"
+                    )
+                return ADAPTER_REGISTRY[name]()
+            adapter_resolver = _default_resolver
+        self._adapter_resolver = adapter_resolver
         repo_root = Path(__file__).parent.parent
         self._agents_dir = agents_dir or repo_root / "agents"
         self._skills_bundle_dir = skills_bundle_dir or repo_root / "skills-bundle"

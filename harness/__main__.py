@@ -63,6 +63,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--status", action="store_true", help="Show project status")
     parser.add_argument(
+        "--validate-config", dest="validate_config", action="store_true",
+        help="T32: load + validate config/models.yaml (and adapter registry) "
+             "and exit. Returns 0 on success, non-zero with a clear error "
+             "message on misconfig. Useful as a CI gate.",
+    )
+    parser.add_argument(
         "--cancel-hold", dest="cancel_hold", action="store_true",
         help="Cancel any pending quota hold + exit (does not run the pipeline)",
     )
@@ -143,6 +149,20 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.status:
         return _print_status(project_dir)
+
+    # T32: `--validate-config` is the cheap CI gate. Loads the YAML,
+    # validates every tier's `adapter` against the central registry,
+    # and exits 0/1 with a clear message. Never touches the network
+    # or spawns a subprocess.
+    if args.validate_config:
+        from harness.router import ModelRouter
+        try:
+            ModelRouter()
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"❌ Config validation failed: {exc}", file=sys.stderr)
+            return EXIT_PIPELINE_ERROR
+        print("✅ config/models.yaml is valid (all tier adapters registered).")
+        return EXIT_OK
 
     # `--cancel-hold` short-circuits the pipeline: cancel the OS wake-up
     # and clear the on-disk hold, then exit. No brief, no ClaudeAdapter,

@@ -40,6 +40,12 @@ class TierConfig(pydantic.BaseModel):
     :meth:`ModelRouter.check_budget`. Omit (``None``) to disable the
     circuit breaker for a tier — useful for stages where the per-tier
     cap doesn't make sense, or for emergency "let it run" overrides.
+
+    T32 — ``adapter`` is the name of the backend that should service
+    this tier (key into :data:`harness.adapters.ADAPTER_REGISTRY`).
+    Defaults to ``"claude"`` for back-compat with the shipping YAML.
+    An unknown name fails the whole load in
+    :meth:`ModelRouter._load_config` rather than silently falling back.
     """
 
     model_config = pydantic.ConfigDict(frozen=True)
@@ -48,6 +54,7 @@ class TierConfig(pydantic.BaseModel):
     base_url: Optional[str] = None
     fallback: Optional[str] = None
     max_tokens: Optional[int] = None
+    adapter: str = "claude"
 
 
 class BudgetConfig(pydantic.BaseModel):
@@ -99,6 +106,11 @@ class ModelSpec(pydantic.BaseModel):
     base_url: Optional[str] = None
     fallback: Optional[str] = None
     max_tokens: Optional[int] = None
+    # T32: name of the backend (key into
+    # :data:`harness.adapters.ADAPTER_REGISTRY`) that should service
+    # this spec. ``None`` means "use the default resolver"; the
+    # Router fills this in from ``TierConfig.adapter`` at load time.
+    adapter: Optional[str] = None
 
     model_config = pydantic.ConfigDict(frozen=True)
 
@@ -189,6 +201,9 @@ class ModelRouter:
                 base_url=spec.base_url,
                 fallback=spec.fallback,
                 max_tokens=spec.max_tokens,
+                # T32: carry the adapter name forward so the Pipeline
+                # can pick the right backend without re-parsing YAML.
+                adapter=spec.adapter,
             )
             for tier_name, spec in self._config.tiers.items()
         }
@@ -238,6 +253,9 @@ class ModelRouter:
                 tier=tier_name,
                 base_url=env_base_url or base.base_url,
                 fallback=env_fallback or base.fallback,
+                # T32: carry the adapter name through env overrides so
+                # the resolver still knows which backend to use.
+                adapter=base.adapter,
             )
 
         return base
@@ -332,7 +350,25 @@ class ModelRouter:
             )
         with self._config_path.open() as fh:
             raw = yaml.safe_load(fh)
-        return ModelsConfig.model_validate(raw)
+        config = ModelsConfig.model_validate(raw)
+        # T32: validate every tier's ``adapter`` against the central
+        # registry. Misconfig surfaces here (at startup) rather than
+        # deep inside the first ``_call_agent`` when ClaudeAdapter gets
+        # a request for a backend that doesn't exist.
+        # Importing lazily to avoid a circular dependency: the registry
+        # module itself imports from this file's siblings.
+        from harness.adapters import ADAPTER_REGISTRY
+
+        for tier_name, spec in config.tiers.items():
+            if spec.adapter not in ADAPTER_REGISTRY:
+                available = ", ".join(sorted(ADAPTER_REGISTRY.keys())) or "(none)"
+                raise ValueError(
+                    f"tier '{tier_name}' references unknown adapter "
+                    f"{spec.adapter!r}. Available adapters: {available}. "
+                    f"Add the adapter to harness/adapters/__init__.py "
+                    f"ADAPTER_REGISTRY or pick one of the available names."
+                )
+        return config
 
     def _get_tier(self, stage: str) -> str:
         if stage not in self._assignments:

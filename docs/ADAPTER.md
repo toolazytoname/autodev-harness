@@ -109,3 +109,49 @@ required.
 - **Linux**: same as macOS. Headless servers work — no display
   required.
 - **Windows**: works in WSL2. Native Windows is untested.
+
+## Registering a new adapter (T32 contract)
+
+The pipeline dispatches to the right backend per-tier via the central
+`ADAPTER_REGISTRY` in `harness/adapters/__init__.py`. The contract for
+adding a new adapter:
+
+1. **Implement the class.** Subclass `AdapterBase` in a new module
+   under `harness/adapters/`. The class must implement `_execute(...)`
+   returning an `AgentResult`. The full interface is described at the
+   top of `harness/adapters/base.py`.
+
+2. **Register the name.** Add a key → class entry in
+   `ADAPTER_REGISTRY`:
+   ```python
+   ADAPTER_REGISTRY: dict[str, type[AdapterBase]] = {
+       "claude": ClaudeAdapter,
+       "your_backend": YourAdapter,
+   }
+   ```
+   Only register a backend that **fully works** — T32's rule is
+   "注册过的 adapter 必须能跑". A `NotImplementedError` stub must NOT
+   be in the registry; instead, leave it as a non-registered module
+   (the opencode/codex stubs are excluded for this reason).
+
+3. **Reference it from YAML.** Set `adapter: your_backend` under the
+   tier that should use it in `config/models.yaml`. The default
+   (`adapter: claude`) is implied when the field is omitted.
+
+4. **Validate before running.** `python -m harness --validate-config`
+   loads the YAML, checks every tier's `adapter` against the registry,
+   and exits non-zero with a clear error if anything is off. Run this
+   in CI on every PR — it's the cheapest way to catch a typo in the
+   adapter name.
+
+5. **Per-tier resolution.** The pipeline looks up the adapter name
+   through `pipeline._adapter_resolver(name)`. The default resolver
+   reads from `ADAPTER_REGISTRY`; tests can inject a custom resolver
+   to swap backends per-test without touching the registry.
+
+6. **Update the spec / tests / docs.** Add the adapter to
+   `tests/test_adapters.py`, list the prerequisites in the
+   "Platform-specific notes" section above, and confirm the
+   `tests/test_t32_adapter_factory.py` registry tests still pass
+   (they assert "claude" is registered, but additional keys are
+   allowed).
