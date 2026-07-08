@@ -53,3 +53,9 @@ ENV/
 
 # Local secrets directory
 secrets/
+
+# Git worktrees (per-machine active branches)
+.worktrees/
+
+# Claude Code local settings (per-machine, may contain permission rules)
+.claude/settings.local.json
