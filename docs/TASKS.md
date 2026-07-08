@@ -930,7 +930,7 @@ patch 路径全部保留），593 passed / 2 deselected，覆盖率 84%+。`pipe
 
 ## M8 测试补全（独立，与 M6/M7 并行 / 排后皆可）
 
-### T37 [MED] scheduler 三后端测试 + 弱断言强化 + flaky 修正  ⏳
+### T37 [MED] scheduler 三后端测试 + 弱断言强化 + flaky 修正  ✅ 2026-07-08
 **内容**：scheduler.py 覆盖率仅 48%，且未测的就是会真的写到 systemd / at / fork 子进程的后端。
  此外 P2 弱断言与 flakey 风险清单一并解决。
 
@@ -978,6 +978,17 @@ patch 路径全部保留），593 passed / 2 deselected，覆盖率 84%+。`pipe
 - scheduler 后端涉及 `os.fork`：用 `unittest.mock` 的 `patch("os.fork")`，**别** `os.fork = lambda: 0`，会改全局。
 - 强化断言过程中若暴露 bug（如 T16a 解析回归），**升级为 T16a-erratum 一个独立 fix**，
   不要塞进 T37 commit。
+
+**完成记录**：4 块全做 — (1) `tests/test_t37_scheduler_backends.py` 7 个 RED→GREEN 用例
+覆盖 `_register_systemd` (HOME 重定向 → 写 `~/.config/systemd/user/{harness-X.timer,service}`，
+验 `OnCalendar` + 调 `daemon-reload` + `enable --now`)、`_register_at` (验 argv= `["at",
+"10:00 2026-07-08"]` + stdin 喂命令)、`_register_sleeper` fork path (父进程不调 sleep/system)。(2) 弱
+断言补强：两 case (`test_anthropic_429_carries_retry_after` / `test_minimax_balance_message_is_quota_exhausted`)
+断言 `signal.retry_after_seconds` / `signal.provider` 而非纯 `is not None`；scheduler.py 覆盖率 48→≥70%。(3) 修
+flaky：`tests/test_visual_reviewer.py:138` `deadline_seconds=0.3`→`1.5`；`tests/test_t25_adapter_dry.py:285`
+`elapsed < 1.0`→`< 5.0`，注释说明 CI 上宽松阈值的 rationale。(4) `smoke_test_adapter.py:35` 原
+assert `result.usage is not None` 已与 spec 等价（smoke 是 slow 标记不进 CI）。全量 600 passed /
+2 deselected (was 593; +7)，覆盖率 84%+。
 
 ---
 
