@@ -365,6 +365,546 @@ stub 的 `NotImplementedError` 文案明确点名类名便于诊断。
 
 ---
 
+## M5b 韧性正确性（这三个是真会崩的 Bug，先于一切修）
+
+> 来源：2026-07-08 三轮架构审查。所有 `file:line` 在动手前 **必须 grep 核对**
+> （指令："可能已漂移"），下面给出 `grep` 验证锚点。
+
+### T28 [CRITICAL] 合并冲突污染仓库 + worktree 超时未捕获  ⏳
+**内容**：两处都会在真实运行中触发，且在 worktree 层做错就连锁污染主仓库
+所有后续任务合并。具体证据与定位锚点：
+
+- `harness/worktree.py` 的 `merge_worktree()`：靠 `subprocess.run([...git merge --no-ff...])`
+  抛出异常时**没有任何 abort/reset**，主仓库 `project_dir` 工作区陷入 MERGING 状态。
+  下次调 `_on_gate_pass` → `merge_worktree` → `git checkout target`，git 因存在未合并
+  文件拒绝，从此刻起 develop 阶段剩余所有任务合并必失败。
+  - **grep 锚点**：`grep -n 'git merge\|git checkout' harness/worktree.py`
+  - **完整证据**：harness/ 全目录**零**匹配 `merge --abort` 或 `reset --hard`。
+- `harness/worktree.py` 的 `get_worktree_diff` / `get_worktree_files`：subprocess.run
+  无 `check=True` 却用 `except subprocess.CalledProcessError` 捕获——属死代码；
+  真正的 `subprocess.TimeoutExpired`（timeout=30）**未捕获**，会冒泡穿透
+  `_collect_review_context` → `_run_iteration` 致整个 inner loop 崩盘。
+  - **grep 锚点**：`grep -n 'TimeoutExpired\|CalledProcessError\|check=True\|timeout=' harness/worktree.py`
+
+**为什么是 CRITICAL**：第一次 merge 冲突即触发，且修复后的项目状态对下游不可逆。
+不是 flaky、不是边缘 case，是**必然失败路径**。
+
+**TDD 步骤**（严格 RED-GREEN-IMPROVE）：
+1. **RED 用例 A 写**：`tests/test_t28_merge_abort_on_conflict.py::test_conflict_aborts_and_cleans_repo`
+   - 起真 git repo → 创建冲突源 → mock `subprocess.run` 让 merge 抛 `CalledProcessError` /
+     让 merge 真的冲突 → 断言 `merge_worktree` 抛前**先**调用 `git merge --abort`
+     在主仓库 cwd，且最终仓库 `git status` **干净**（无 `UU` / 无 `MERGE_HEAD`）。
+2. **RED 用例 B 写**：`tests/test_t28_merge_abort_on_conflict.py::test_diff_timeout_returns_empty`
+   - mock subprocess.run 抛 `subprocess.TimeoutExpired` → 断言 `get_worktree_diff` 返回
+     `""`（与 docstring 行为一致）且不抛异常；同样行为给 `get_worktree_files`。
+3. 跑测试 → 看到 fail（现实现要么吞不上报的 CalledProcessError，要么冒泡 TimeoutExpired）。
+4. **GREEN**：在 merge_worktree 的 except 分支 `raise` 前 `subprocess.run(["git","merge","--abort"], cwd=project_dir, check=False, capture_output=True)`
+   抹平异常；把 except `CalledProcessError` 改为 `except (CalledProcessError, TimeoutExpired)`。
+5. 跑全量 `pytest -m "not slow"` 全绿且 523 测试不变红。
+
+**验收**：
+- 上面 2 个 RED 测试转绿。
+- `grep -n 'merge --abort' harness/worktree.py` **必须**返回非零行。
+- 全量 `pytest -m "not slow"` 仍 523 passed / 2 skipped。
+- 单独建一个真冲突 case（无需 merged 也能触发）→ 跑 `git status` 干净。
+
+**坑点**：
+- merge --abort 在从没冲突时返回 1 → 用 `check=False` 容忍，别让 abort 失败把主流程炸了。
+- 调用者 `pipeline.py:606` 还会捕获 `EscalationError`，意味着 abort 后 `merge_worktree`
+  还得**重新抛** `InnerLoopError` 让上层升级处理，abort 是清理不是吞错。
+- 测试中真 git 子进程要 `tmp_path` + `git init -b main` + 两个 commit，**不要**模仿已有
+  `test_t18_resume_precision.py` 复用持久 repo。
+- **不要**顺便重构 merge 函数体——只加 abort 与 except 范围两件事。
+
+---
+
+### T29 [CRITICAL] T21 预算熔断拍板：接线或拆除  ⏳
+**内容**：T21 [HIGH] 自首个 ⏳ 留下以来未拍板。三轮审查均确认现状是
+**假承诺 + 死代码 + 双重定义**，无人值守跑批 token 无上限（MASTER-PLAN §6
+第 2 条悬空）。本任务**强制二选一**，不允许"半截接线"。
+
+**判别证据**（动手前先 grep 复核，不要盲信）：
+- `grep -n 'check_budget\|BudgetExceeded\|spent_by_tier' harness/router.py`
+  → check_budget 整段 `pass`（router.py:249-275 的整个 if 块只有 `pass`）。
+- `grep -rn 'check_budget' harness/ --include='*.py'`
+  → 调用方只剩 router.py:14 文档字符串示例，**实际路径无人调用**。
+- `grep -n 'class Usage\|^Usage' harness/router.py harness/adapters/base.py`
+  → Usage 双重定义：`router.py:326` 与 `adapters/base.py:23` 重复。
+- `grep -rn '_instance' harness/router.py` → 单例字段死代码。
+- `grep -n 'Usage()' harness/inner_loop.py` → visual reviewer 记账返回空 Usage。
+
+**二选一，由用户拍板**——**先在 issue 提问题等回复再动手**，不允许自行决定：
+
+**(A) 接线（推荐：M5 韧性立得住靠这条）**：
+- `config/models.yaml` 每 tier 加 `max_tokens` 绝对上限 + `warn_at`/`stop_at` 比例。
+- `harness/router.py::check_budget` 真正比较 + `raise BudgetExceeded`，
+  在 `harness/pipeline.py::_call_agent`（不是 :322；**动手前 grep 复核**）调 `router.check_budget(stage)`。
+- `visual_reviewer` 提取真实 token usage（需要 subprocess 解析或 reporter 改回 Usage）。
+- 删除 `router.py:326` 的 `Usage`，仅保留 `adapters/base.py:23`。
+- 测试：超 stop 真抛、warn 触发日志、调用方（N 阶段）真的被拦截。
+
+**(B) 拆除（删除死代码，安全但不浪漫）**：
+- 删 `check_budget`、删 `BudgetExceeded`、删 `_instance`、删 `router.py:326` 的 `Usage`。
+- 删 `router.py:14-15` 的示例 docstring。
+- 同步 `docs/MASTER-PLAN.md` §5.7 / `docs/REVIEW.md` 等所有提到 budget 保护的句子
+  （**先 grep 收齐**：`grep -rn 'check_budget\|BudgetExceeded\|max_tokens' docs/ harness/`）。
+
+**验收**：
+- A 路径：`python -m harness --test small-app`，故意把 budget cap 设成 10000 token、
+  把 mock adapter 返回固定大 usage，三次 stage 后第 X 次抛 `BudgetExceeded` 并被 `__main__`
+  捕获 exit 137；覆盖 `tests/test_t29_budget_circuit.py`。
+- B 路径：`grep -rn 'BudgetExceeded\|check_budget\|spent_by_tier' harness/ docs/` 全部
+  0 命中（除 test_t29_budget_circuit.py 自身的回归测试），无 doc 残留口号。
+- `__main__.py` 退出码表新增 `137`/`BudgetExceeded` 映射或确认撤销后无需映射。
+
+**坑点**：
+- **绝对不允许拆 / 接中间态**——T21 之所以挂了两年正是因为反复"半截"，这次必须二选一。
+- 拍板未下前不要开 PR；拍板文档化在 `docs/TASKS.md` 本任务完成记录里（一句话即可）。
+- 拆 (B) 不可逆——若有任何 reviewer 内调用 check_budget 顺手的事，先 grep 全数迁移。
+
+**拍板记录**：A（接线）— 用户 2026-07-08 拍板；实施排在 T28 之后，与 T30 并行（依赖顺序 `T28 → T29 ↔ T30 → T31 → T32`）。
+
+---
+
+### T30 [CRITICAL] Adapter provider 解耦 + JSON envelope 拆出  ⏳
+**内容**：两件高度相关，必须一起做：
+
+**Bug A：worker 层 (MiniMax) 配额永远识别不出**
+- 现状：`harness/adapters/claude.py:610-629` 的 `_classify_quota` 硬编码
+  `classify_quota_error(text, provider="anthropic", config=_QUOTA_CONFIG)`。
+  `config/quota.yaml:36-42` 为 MiniMax 单独写了"余额不足"模式——这些规则永远不会被命中。
+- 后果：T16a/c/d 配额挂起-唤醒链路对 worker 层完全失效（worker 余额耗尽时按通用 429 重试 3 次烧 budget）。
+- 修法：让 `run(...)` 把 `provider` 沿调用栈（`ModelSpec` 已含 tier & provider，
+  在 `router.resolve` 加 `provider` 字段；动手前 grep：`grep -n 'class ModelSpec\|class TierConfig' harness/router.py`）
+  一路传进 `_classify_quota`；或更稳：在 adapter 构造时拿 provider，`_classify_quota` 遍历
+  `_QUOTA_CONFIG.providers` 全部尝试（find-first 命中）+ `http_status` 兜底。
+
+**Bug B：is_error 信封 + exit=0 的硬错误被吞成空字符串**
+- 现状：`harness/adapters/claude.py:422-485` `_parse_json_output` 只找 `result/content/text`，
+  对 `is_error: true` 且 `exit_code == 0`（如 400 invalid_request / auth 失败）的硬错误
+  返回 `""`，下游拿到空 spec / 空代码。
+- 修法：解析到 `is_error: true` 即抛 `InvalidResponseError(NON_RETRYABLE)`（已存在的异常类）；
+  先 grep：`grep -n 'InvalidResponseError\|NON_RETRYABLE' harness/adapters/base.py`。
+
+**结构：C 拆 json_envelope（claude.py 711 → ~300 + 2 个新模块）**
+- 抽 `harness/adapters/json_envelope.py`：`_parse_json_output` / `_loads_json_envelope` /
+  `_strip_code_fence` / `_extract_json` / `_parse_usage`（这五块与 provider 无关，未来
+  opencode/codex 直接复用）。
+- 这三个 JSON 提取函数（`_extract_json` :524 / `_loads_json_envelope` :487 /
+  `_extract_structured_error` :686）逻辑高度重叠，合并成单一 `extract_envelope()` 解析器。
+
+**TDD 步骤**：
+1. **RED 1**：`tests/test_t30_provider_classify.py::test_worker_balance_message_matches_minimax_provider`
+   —— 构造 `text="余额不足，请充值"`，调 `_classify_quota`，断言返回 `QuotaExhaustedError` 或同义信号，
+   而不是 `None`。
+2. **RED 2**：`tests/test_t30_provider_classify.py::test_structured_4xx_does_not_return_empty_string`
+   —— 构造 `is_error: true`、`exit_code: 0` 的信封 + mock subprocess，
+   断言抛 `InvalidResponseError` 而非拿到 `""` / `None`。
+3. **GREEN**：传 provider / 改 _parse_json_output 检查 is_error。
+4. 重构：抽 `json_envelope.py`、把 `_strip_code_fence:516` 内部 `import re` 提到模块顶、
+   `build_subprocess_env:75` 内部 `import os` 提到顶（同 T27 习惯）。
+5. 跑全量 523 测试不变红。
+
+**验收**：
+- 上面 2 测试转绿。
+- `grep -n 'provider="anthropic"' harness/adapters/claude.py` → 改为读动态 provider，不再字面量。
+- `harness/adapters/json_envelope.py` 存在且 ≤200 行；`harness/adapters/claude.py` 缩到 ≤350 行。
+- 全量 `pytest -m "not slow"` 525 passed（523 + 2 新），覆盖率 ≥83%。
+
+**坑点**：
+- 不要顺手"统一抽取 sub adapter 接口"——超出本任务边界；本任务只动 provider 透传 + JSON 拆出。
+- 拆 json_envelope 时务必保证 `_extract_structured_error` 的调用方仍可达
+  （先 grep：`grep -rn '_extract_structured_error' harness/`）。
+- provider 字符串约定：`router._load_config` 已加载；不要重复加载，**复用**。
+
+---
+
+### T31 [HIGH] 配额挂起：写盘+唤醒注册两条 fail-loud  ⏳
+**内容**：两处都让"配额耗尽=自动恢复"沦为承诺：
+
+**Bug A：reset_hint 带前缀触 ValidationError**
+- 现状：`harness/quota_hold.py:221-224` 拿到 `exc.reset_hint` 形如 `"resets_at=2025-...T..."`
+  （生产端在 `harness/quota.py:351`），把整串塞进 `ResetHint.reset_at: Optional[datetime]`，
+  pydantic 解析失败。
+- 后果：`enter_quota_hold` 在最需要韧性的瞬间崩掉，hold 文件未写、OS 唤醒未注册，
+  `__main__.py:218` 还会骗用户说"会自恢复"。
+- 修法（一）：`raw = exc.reset_hint.split("=", 1)[-1] if exc.reset_hint else None` 再 `fromisoformat`。
+- 修法（二，更稳）：`QuotaExhaustedError` 改结构化 `reset_at: datetime | None`，
+  数据 / 展示分离（quota.py:351 改为 `f"resets_at={display}"` 时只用于 logging，无副作用）。
+
+**Bug B：OS 唤醒注册失败被裸 except 吞**
+- 现状：`harness/quota_hold.py:256-265` 的 `register_wakeup` 用 `except Exception: pass`，
+  失败后 hold 文件已写但无人会触发 `--continue`。
+- 修法：替换为 `_log.error("quota-hold wakeup registration failed; user must --continue manually", exc_info=True)`，
+  并在 hold JSON 中加字段 `wakeup_registered: bool`，
+  `format_hold_status` / `harness status` 命令（grep 定位：`grep -rn 'format_hold_status\|harness status' harness/ docs/`）
+  把 `wakeup_registered=False` 醒目显示给运维。
+
+**TDD 步骤**：
+1. **RED A**：`tests/test_t31_reset_hint_parse.py::test_prefixed_reset_hint_is_parsed`
+   —— 构造 `QuotaExhaustedError(reset_hint="resets_at=2026-07-08T10:00:00+00:00", ...)`，
+   断言 `enter_quota_hold` 不抛 ValidationError 且 hold 写入成功，`resume_at` 解析正确。
+2. **RED B**：`tests/test_t31_wakeup_logging.py::test_wakeup_failure_is_logged_not_swallowed`
+   —— `register_wakeup` mock 抛 RuntimeError → 断言 logger.error 被调 + 断言 hold JSON 含 `wakeup_registered=false`。
+3. 跑测试 → fail。
+4. **GREEN**：(A) 剥前缀 / 改结构化；(B) 移除裸 except + 加 logging。
+5. **sync A 的副作用**：grep `"resets_at="` `harness/quota.py` `tests/`，把仅做展示的拼接保留在 logger，
+  数据流不再携带该前缀（grep 调用方决定）。
+
+**验收**：
+- 2 个 RED 转绿；现有 T16c/d 测试不变红。
+- `grep -n 'except Exception' harness/quota_hold.py` 仅剩白名单（如读写 IO 边界），不再"裸吞注册失败"。
+- `python -m harness status` 在 mock failure 路径下输出"需要手动 --continue"等明确文案。
+
+**坑点**：
+- 改 `QuotaExhaustedError` 结构是 breaking：grep `QuotaExhaustedError(` 全仓调用方（tests + harness/），
+  改 dataclass 字段顺序或名称会连锁；先全数迁移。
+- `quota_hold.HoldRecord`（如存在）加字段要**附 default `True`** 保持向后兼容老 hold 文件
+  —— 读取到旧 hold 视为 `wakeup_registered=True`（旧版未记）。
+
+---
+
+### T32 [HIGH] opencode/codex 工厂 + 启动 fail-fast  ⏳
+**内容**：当前 `config/models.yaml` 改了 model 字符串后，系统会**继续用 `ClaudeAdapter`**
+ 静默跑错后端；`router.resolve` 只返回 `ModelSpec(model=str)`，无 adapter 映射。
+ 现状（动手前先 grep 确认）：
+
+- `grep -rn 'ClaudeAdapter()' harness/` → 只在 `__main__.py:198` 出现一次。
+- `grep -rn 'OpenCodeAdapter\|CodexAdapter' harness/__main__.py` → **零**（`Pipeline` 构造时
+  注入的就是 `ClaudeAdapter`，opencode/codex 永远不会被实例化）。
+- `grep -rn 'AdapterRegistry\|adapter_factory\|adapter_name\|ADAPTERS' harness/` → 不存在。
+- `harness/adapters/opencode.py:46`、`codex.py:45` 是 `raise NotImplementedError`，纯死代码。
+
+**修法**：
+1. 在 `harness/adapters/__init__.py` 加 `ADAPTER_REGISTRY: dict[str, type[AdapterBase]] = {"claude": ClaudeAdapter, "opencode": OpenCodeAdapter, "codex": CodexAdapter}`（如 stub 仍 NotImplemented 则**暂不**注册到 default registry——先留 stub，待真实接口实现后再注册，避免"启动 fail-fast 但每个任务都炸"——以"注册过的 adapter 必须能跑"为准）。
+2. `TierConfig` 加字段 `adapter: str = "claude"`（pydantic v2 默认值），`router.resolve()` 把
+   `adapter` 字段透传给 Pipeline。
+3. `Pipeline.__init__`（`grep -n '__init__' harness/pipeline.py`）接受 `adapter_resolver: Callable[[str], AdapterBase]`，默认走 registry。
+4. `ModelRouter._load_config` 阶段：遍历所有 tier，若 `tier.adapter` 不在 `ADAPTER_REGISTRY`，
+   **`FileNotFoundError`-风格抛清晰错**（fail-fast）——这是本任务的主验收。
+5. T07 验收 smoke（`--test` 完整跑通）才能证明本任务正确，因为 opencode/codex stub 仍未真实实现，
+   验收标准是"目前只接 claude"，未注册的 adapter 在配置加载期即报错。
+
+**TDD 步骤**：
+1. **RED 1**：`tests/test_t32_adapter_factory.py::test_unknown_adapter_in_yaml_fails_fast`
+   —— 写一份临时 yaml，`tier.adapter="bogus"`，断言 `ModelsConfig.model_validate` /
+   `ModelRouter._load_config` 抛清晰错（`FileNotFoundError` 或自定义 `AdapterNotRegisteredError`），
+   含类名 `"bogus"` 便于诊断。
+2. **RED 2**：`tests/test_t32_adapter_factory.py::test_pipeline_resolves_adapters_by_tier`
+   —— mock ADAPTER_REGISTRY，给 `developer` tier 指定 `mock_adapter`、
+   给 `reviewer` tier 指定 `mock_reviewer`，断言 Pipeline 调 stage 时分别拿到对应 mock。
+3. **GREEN**：实现 registry + fail-fast + 注入链。
+4. **回归**：全量测试不变红。
+
+**验收**：
+- 2 测试转绿；现有 523 测试不变红。
+- `models.yaml` 临时加 `adapter: bogus` 后 `python -m harness --validate-config`（如无此 subcommand 则加；先 grep：`grep -rn 'validate-config\|subcommand' harness/__main__.py`）能给出明确诊断；如不支持，加一个 CI smoke 测试即可。
+- `harness/adapters/__init__.py` 含 `ADAPTER_REGISTRY`。
+- `docs/ADAPTER.md`（已存在 111 行）**追加一节**："如何注册新 adapter"，列契约。
+
+**坑点**：
+- 不要顺手实现 `OpenCodeAdapter` / `CodexAdapter` 真实逻辑——超出本任务，那是另一条线。
+- 老 configs 没 `adapter` 字段时必须默认 `"claude"`，保证向后兼容（grep `config/models.yaml` 全文）。
+- pydantic `TierConfig.adapter: str = "claude"` 要记得测试这个 default。
+
+---
+
+### T6+: M6 CI 与工具链（独立，可早做）
+
+### T33 [HIGH] CI 缺口：测试 workflow + ruff 起步  ⏳
+**内容**：`.github/workflows/` 下只有 `security.yml`（gitleaks），**没有任何跑 `pytest` 的
+ workflow**。523 个测试从未在 PR 上跑过，"84% 覆盖率"这个数字没有守门机制。
+ 无 ruff / mypy / pre-commit。
+
+**修改清单**：
+1. 新建 `.github/workflows/tests.yml`：
+   - 触发：`push: [main, develop]`、`pull_request: [main, develop]`。
+   - 矩阵：`python-version: ["3.11", "3.12"]`（项目 `requires-python = ">=3.11"`，
+     先 grep：`cat pyproject.toml | grep requires-python` 复核）。
+   - 步骤：`actions/checkout@v4` → `actions/setup-python@v5` with cache `pip` →
+     `pip install pytest pytest-cov` + 项目本体 → `pip install -e ".[dev]"` →
+     `pytest -m "not slow" --cov=harness --cov-fail-under=80 -q`。
+2. 新建 `.github/workflows/lint.yml`：
+   - `ruff check .` + `ruff format --check .`（用 `astral-sh/ruff-action@v1`）。
+   - 项目**当前**无 ruff 配置 → 本任务顺便 `pyproject.toml` 加
+     `[tool.ruff] line-length = 100`、`[tool.ruff.lint] select = ["E","F","I","B","UP","SIM"]`
+     （保守起步，跑 ruff --statistics 看一下当前告警数，**接受 noise** 比追求 0 更重要）。
+3. **可选**：加 `.pre-commit-config.yaml`（`pre-commit-ci/standard` 钩子）—— 先**只**勾 ruff；
+   mypy 在覆盖率没做之前不要上。
+4. README 顶部加 CI badge（`![](https://github.com/<org>/autodev-harness/actions/workflows/tests.yml/badge.svg)`，
+   org 名 grep `.git/config` 取）。
+
+**TDD 步骤**：CI 任务本身靠"全量测试通过"作为 RED-GREEN 验证。
+- **RED**：本地 `pytest -m "not slow" --cov-fail-under=80 -q` 跑一遍，确认覆盖率 ≥80；
+  若本地已是 84%，先撞 80 没问题。
+- **GREEN**：CI 配置提交，看 PR 上两 badge 转绿（如规则允许，本地无法直接跑 CI）。
+- 验证 ruff lint job，第一次跑必然大量告警——**只修新增文件 + 现有文件**已知的 `E/F` 类最严重的，
+  大规模修整留给后续任务（**禁止**改无关代码凑绿灯，"不许顺手重构"）。
+
+**验收**：
+- 推一个最小改动 PR → tests + lint 两个 CI job 转绿。
+- `cov-fail-under=80` 守住；后续 PR 覆盖率跌破 80 自动 fail。
+- ruff lint job 跑通（**允许先有 baseline noise**，本任务只确认 job 在线）。
+
+**坑点**：
+- CI 用 `pytest -m "not slow"`——已设置 marker，slow 跑可能需要真实网络 / CLI。
+- 不要在 CI 里 `pip install claude / opencode / codex`——那些是外部 CLI；项目本身只装 pydantic+pyyaml+pytest。
+- mypy 留着——还没 untyped，强行上 -strict 会触发大量 stub fail，**禁止**为此大改代码。
+- 跑 ruff 报的告警若是项目自己定的（如 `B008` 在函数默认值），**保持现状**，不要纠结。
+
+---
+
+### T34 [MED] 魔数收敛 + 重试/退避统一  ⏳
+**内容**：timeout / retry 魔数散落 6+ 文件，无统一来源；三 agent 一致指出重试循环
+不一致，且忽略 `Retry-After` / 无 jitter。
+
+**动手前先 grep 全数对齐现状（任何位置的魔数都要枚举到）**：
+- `grep -rn 'timeout\s*=\|RETRY_BASE_DELAY\|RETRY_MAX_ATTEMPTS\|RETRY_MAX_DELAY\|RETRY_JITTER' harness/ --include='*.py'`
+- 当前分布（参考值，行号可能漂移）：
+  - `harness/pipeline.py:49` → 600s
+  - `harness/generator.py:28` → 300s
+  - `harness/reviewer_runner.py:54` → 180s
+  - `harness/visual_reviewer.py:222` → 15000ms（注意是 ms）
+  - `harness/visual_reviewer.py:87` → 1.5s
+  - `harness/quota_hold.py:220` → `window_hours=5`
+  - `MAX_AUTO_RESUME=3` 在 `harness/quota_hold.py` 或 `harness/scheduler.py`
+  - `RETRY_BASE_DELAY=1.0` 在 `harness/adapters/base.py:206`、被 `claude.py:119` 覆盖为 2.0
+  - `RETRY_MAX_ATTEMPTS=3`、`RETRY_MAX_DELAY=32` 在 base
+
+**修法**：
+1. 新建 `config/resilience.yaml`，三个段：
+   - `timeouts:` 平铺所有 `agent/generator/reviewer/visual/quota` 的秒数。
+   - `retry:` 平铺 `base_delay_seconds` / `max_attempts` / `max_delay_seconds` / `jitter_ratio`（新增 `jitter_ratio=0.25`）。
+   - `quota:` 平铺 `window_hours` / `max_auto_resume`。
+2. 新建 `harness/resilience.py::ResilienceConfig`（pydantic），从 yaml + env 覆盖。
+3. 让 `Router` / `Pipeline` / `Generator` / `ReviewerRunner` / `VisualReviewer` / `QuotaHold` 全部从
+   `ResilienceConfig` 取，**删除字面常量**。
+4. **重试循环统一**：
+   - 让 `claude._attempt`（多模态路径，`grep -n '_attempt\|run_with_attachments' harness/adapters/claude.py`）直接复用 `AdapterBase._run_with_retry`。
+   - `_backoff_delay` 增加 hint：当 `RateLimitError.retry_after_seconds` 有值时优先用 `min(provider_hint, max_delay) * (1 + jitter)`。
+   - 加 `jitter_ratio`：用 `random.uniform(-ratio, ratio) * delay`（注意脚本环境无 `Date.now()` /
+     `Math.random()` 等价的限制——`random` 模块可用，**确认**：`harness/` 无种子调用即可）。
+5. T16d 已写 mock scheduler，本任务的魔数删后要保证该测试不漂移。
+
+**TDD 步骤**：
+1. **RED A**：`tests/test_t34_retry.py::test_rate_limit_uses_provider_retry_after`
+   —— mock 抛 `RateLimitError(retry_after_seconds=10)`，断言 `_backoff_delay` 返回 ≈10（含 jitter 上下界）。
+2. **RED B**：`tests/test_t34_retry.py::test_jitter_breaks_thundering_herd`
+   —— 跑 100 次 _backoff_delay，断言至少 5 个不同值（不退化成定值）。
+3. **RED C**：`tests/test_t34_retry.py::test_resilience_config_loads_and_overrides`
+   —— 构造 yaml，环境变量覆盖，返回值与 yaml/env 优先级一致。
+4. **GREEN**：实现 ResilienceConfig + 改 retry 逻辑 + 加 jitter。
+5. 全量 `pytest -m "not slow"` 绿，**特别**关注 `test_t25_adapter_dry.py:278` 的挂钟断言
+   —— 加 jitter 可能让该测试落点变化（如仍 ≈1s 内则无需放宽）。
+
+**验收**：
+- 3 个 RED 绿，全量 523 测试不变红。
+- `grep -rn 'timeout\s*=\s*[0-9]' harness/ --include='*.py'` 命中大幅缩减（仅剩 ResilienceConfig
+  内部默认值 / 测试 fixture）。
+- `harness/adapters/base.py` 与 `claude.py` 的 `RETRY_*` 常量统一为 `ResilienceConfig.retry.*`。
+- `claude._attempt` 不再独立维护重试循环，**只走** `AdapterBase._run_with_retry`。
+
+**坑点**：
+- 收紧超时（如把 600s 改成 60s）属**行为变更**——本任务只搬位置不改大小，除非 magic-number 在测试外被反复踩到。
+- `random.uniform` 在 CI 上不能种子化——不写 `random.seed`。
+- 不要碰 T21 / 预算相关字段（与 T29 拍板关系密切）。
+
+---
+
+## M7 死代码清扫 + 拆分（依赖 T28 完成；解循环依赖后可大幅瘦身）
+
+### T35 [MED] 死代码清扫（_DISPATCH × 2 + 双方法定义 + sleeper 阻塞修复）  ⏳
+**内容**：四处死代码 + 一个潜在阻塞 bug：
+
+1. **`harness/scheduler.py:371-383` 与 `:386-398`**：**`_DISPATCH` 和 `_CANCEL_DISPATCH`
+   字典被整段定义两次**，第二组覆盖第一组（功能上无害但纯复制粘贴残留）。
+   - grep 锚点：`grep -n '_DISPATCH\|_CANCEL_DISPATCH' harness/scheduler.py`
+   - 全仓无任何引用（真派发走 :132-162 的 if/elif）→ 整块删除。
+   - 验证锚点：`grep -rn '_DISPATCH' harness/ --include='*.py'` 删除后零命中（除测试自身）。
+
+2. **`harness/pipeline.py` `_call_ui_direction` 双定义**：
+   - 第一组 :334-375（42 行完整实现）+ 第二组 :473-495（薄委托）——后者胜出，前者死代码。
+   - 顺便 `UIPhase._render_all_directions`（`grep -n '_render_all_directions' harness/ui_phase.py`）
+     不必绕 Pipeline：直接调自己 `UIPhase._call_ui_direction`（已在 ui_phase.py:245）。
+   - 删 :334-375。
+
+3. **`harness/ui_phase.py` `_ask_version_choice` 双定义**：
+   - :328-360 与 :435-473，后者胜出，前者 33 行死代码。两份实现几乎一致，仅 docstring 不同。
+   - 删 :328-360。
+
+4. **`harness/scheduler.py:349-361` `_register_sleeper`**：
+   - `os.fork if hasattr(os, "fork") else 0` 在 Windows 会走 pid=0 分支 → **父进程自己
+     time.sleep + os.system**，直接阻塞 harness。
+   - `_register_sleeper` 用 `os.system(command)`（:359）+ `enter_quota_hold:257` 拼接
+     `f'... --continue "{project_dir}"'` → **路径含引号 / 特殊字符会被 shell 解析**（低危但真实）。
+   - 修法：检测 `hasattr(os, "fork")`，否则抛 `NotImplementedError("sleeper backend requires POSIX fork; please install launchd/systemd/at")`；
+     拼接命令改 `subprocess.Popen([..., project_dir])` 列表形式，无 shell。
+
+**TDD 步骤**：
+1. **RED A 写弱化测试**：`tests/test_t35_dead_code.py::test_dispatch_dicts_only_defined_once`
+   —— import module，断言 `_DISPATCH`/`_CANCEL_DISPATCH` 不存在（断言"被删"而非"行为对"——
+   死代码本身就是问题）。
+2. **RED B**：`tests/test_t35_dead_code.py::test_sleeper_fallback_fails_fast_on_non_fork`
+   —— monkeypatch `os.fork` 不存在 → 调 `_register_sleeper` → 断言 `NotImplementedError`。
+3. **GREEN**：删死代码 + 修 sleeper 早 fail。
+4. 全量回归——尤其 ui_phase 涉及 4 个 UI direction 的渲染测试，要保证双方法删除没碰错默认调用链
+   （仔细 grep 引用：`grep -rn '_call_ui_direction\|_ask_version_choice' harness/ tests/`）。
+
+**验收**：
+- 3 个 RED 测试绿。
+- 全量 523 测试不变红。
+- `grep -rn '_DISPATCH' harness/ --include='*.py'` 0 命中。
+- `wc -l harness/pipeline.py harness/ui_phase.py harness/scheduler.py` —— 三文件都应有可见减少。
+
+**坑点**：
+- 别顺手"重构" `_register_sleeper` 的 sleep/command 字段名——本任务**只**加 NotImplementedError 短路。
+- `UIPhase._call_ui_direction` 在 `ui_phase.py:245` 用 `self._call_ui_direction` 是同名方法
+  调用还是外部 Pipeline 注入？**动手前 grep 一次确认调用链**——避免删错接口。
+- 第 2、3 点的双方法删除是否会破坏 `_render_all_directions` 链：先 grep `grep -rn '_render_all_directions' harness/` 把全部调用点拉直。
+
+---
+
+### T36 [MED] pipeline.py + claude.py 拆分  ⏳
+**内容**：T24 已把 pipeline 拆出 4 个模块但 781 行仍在 800 行上限边缘；claude.py 711 行
+明确臃肿。本任务做两个文件的纯粹结构性拆分（**不做行为改动**）。
+
+**Plan A：pipeline.py 拆出 3 个新模块**（目标：pipeline.py ≤250 行）
+- `harness/prompts.py` ← `pipeline.py` 的 `_read_agent_prompt` / `_read_bundle_skill` /
+  `_build_prompt` / `_build_ui_prompt`（grep `grep -n 'def _read_agent_prompt\|def _build_prompt' harness/pipeline.py`）。
+  `ui_phase.py:254-259` 已反向 import——抽到中立模块就能消 `pipeline ↔ ui_phase` 的
+  循环依赖（删 ui_phase 的 `# local import avoids cycle`）。
+- `harness/linear_report.py` ← `_summarize_cards_for_linear` / `_extract_blockers_from_cards`
+  （`grep -n 'def _summarize_cards\|def _extract_blockers' harness/pipeline.py`），或并入
+  现有 `harness/linear_sync.py`（先看行数：`wc -l harness/linear_sync.py`，546 行有空间）。
+- `harness/develop_phase.py` ← `phase_develop` + `_next_runnable_task` + `_mark_task_blocked`
+  （`grep -n 'def phase_develop\|def _next_runnable\|def _mark_task' harness/pipeline.py`），
+  与 `ui_phase.py` 对称。
+
+**Plan B：claude.py 拆出 2 个新模块**（已在 T30 拆 json_envelope，本任务再拆 errors）
+- `harness/adapters/claude_errors.py` ← `_RATE_LIMIT_RE` / `_5XX_RE` / `_STRUCTURED_ERROR_KEYS` /
+  `_classify_error` / `_classify_from_structured` / `_extract_structured_error` /
+  `_classify_quota` / `_quota_error`。~160 行。
+
+**phase_develop 68 行 4 层嵌套清理**（顺手做）：
+- `pipeline.py:562-630` 三段 `try: self._linear_sync.mark_*(...) except Exception as e: self._log(...)`
+  抽成 `_safe_linear(action_name, fn)` helper。
+- 单任务执行体抽成 `_develop_one_task(task, loop_config)`，`phase_develop` 仅保留 while 循环骨架。
+- 若按 Plan A 把整个 develop 拆出 `_develop_phase.py` 则更优，**与 Plan A 解耦**——可只做 helper
+  不拆文件。
+
+**TDD 步骤**：
+- **本任务无独立 RED**，靠回归测试守护：
+- 拆分前先跑全量 `pytest -m "not slow"` 记录基线。
+- 每拆一块都跑一次"对应模块测试文件 + 全量"。
+- 重点观察：`tests/test_pipeline.py` 会有 `patch("harness.__main__.Pipeline")` —— 确认
+  拆完后原 `harness.pipeline.X` 符号兼容（旧名仍 reexport）。
+
+**验收**：
+- `python -m harness --test` smoke（如果跑得起来；否则 `pytest -m "not slow"`）全绿。
+- `harness/pipeline.py` ≤250 行；`harness/adapters/claude.py` ≤350 行。
+- 新模块均 ≤200 行（pydantic、测试可达）。
+- 老的 `harness.pipeline._call_ui_direction`、`harness.pipeline._read_agent_prompt` 等公开符号
+  通过 re-export 保留，避免破坏 docstring 示例与外部 patch。
+
+**坑点**：
+- **禁止**改测试以适应新结构——只能保留旧 patch 路径（`patch("harness.X.Y")` 改 `patch("harness.X_module.Y")` 是测试侧动，**不**改）。
+- 重 export 时用 `from .prompts import _read_agent_prompt` 再 `__all__ = [...]`，对 `dir(pipeline)`
+  不影响；让 patch 通过 `harness.pipeline._read_agent_prompt` 仍可达。
+- 文件移动不要忘 `pyproject.toml` 的 hatch packages = ["harness"] 已覆盖整个包。
+
+---
+
+## M8 测试补全（独立，与 M6/M7 并行 / 排后皆可）
+
+### T37 [MED] scheduler 三后端测试 + 弱断言强化 + flaky 修正  ⏳
+**内容**：scheduler.py 覆盖率仅 48%，且未测的就是会真的写到 systemd / at / fork 子进程的后端。
+ 此外 P2 弱断言与 flakey 风险清单一并解决。
+
+**4 块补全**：
+1. **scheduler 三后端**（独立 PyTest）：
+   - `tests/test_t37_scheduler_backends.py::test_register_systemd_writes_timer_unit_and_calls_daemon_reload`
+     —— mock subprocess.run；断言写出 `/etc/systemd/system/autodev-resume-*.timer` + `autodev-resume-*.service`、
+     `OnCalendar` 格式正确（用 `>=` 或具体时间）、调用了 `systemctl daemon-reload` 和 `enable --now`。
+     先 grep：`grep -n '_register_systemd\|def choose_backend\|OnCalendar' harness/scheduler.py`。
+   - `test_register_at_writes_at_job`
+     —— 断言调用 `at` 子进程命令、`at -q <letter> -t <YYYYMMDDHHMM.SS>` 格式正确。
+   - `test_register_sleeper_fork_path_does_not_block_parent`
+     —— `patch("os.fork", return_value=12345)` → 断言父进程分支返回非零 pid、**不调** `time.sleep`、**不调** `os.system`。
+2. **弱断言强化**（回归，不写新文件）：
+   - `tests/test_t16a_quota_classification.py:155` 的
+     `assert signal.retry_after_seconds == 3600 or signal.reset_hint is not None`
+     拆成两个独立断言或 parametrize。
+   - 所有 `assert q is not None` 之类纯存在性断言扫一遍：
+     `grep -rn 'assert .* is not None' tests/` —— 凡后面没跟更强断言、且返回的是
+     结构体（dict / dataclass / pydantic），加 1-2 个字段值断言。
+3. **flaky 修正**：
+   - `tests/test_visual_reviewer.py:138` 的 `deadline_seconds=0.3`：放宽到 `1.5` 或 mock `time.monotonic`。
+   - `tests/test_t25_adapter_dry.py:278` 的 `assert elapsed < 1.0`：放宽到 `< 5.0`（顺手测 O(n)
+     不需紧绷阈值；**或**改为"输入 ×2 → elapsed < 2×elapsed_at_half_input" 验证线性增长），
+     注释里写明已切换。
+   - `_free_port()` 的 TOCTOU：测试 fixture 加 `socket.SO_REUSEADDR` 显式避免 TIME_WAIT；
+     或保留旧代码，注释解释测试范围（**优先**改 fixture）。
+4. **smoke test 注释更新**：
+   - `tests/smoke_test_adapter.py:35`：从 `assert result.usage is not None` 升级为
+     `assert result.usage.tokens > 0`（smoke 本来就该看见真实数字）。
+
+**TDD 步骤**：本任务**无 RED**——测试本就是补覆盖，按既有测试风格写，断言全部为正向断言。
+ 跑全量 `pytest -m "not slow" --cov=harness --cov-report=term-missing`,
+ scheduler.py 应升到 ≥85%，其他模块不掉。
+
+**验收**：
+- scheduler.py 覆盖率 ≥85%（从 48% 升）。
+- 所有目标断言已强化（`grep` 在 `tests/test_t16a_quota_classification.py:155` 不再有 OR 链）。
+- 全量测试 523 passed 不变红（部分 P2-2 强化断言可能**首次**暴露原本薄弱的 bug——若暴露新 bug，
+  写成单独 fix commit + 在本任务完成记录里注一句"借机修了 XXX"，**禁止**塞进 T37）。
+- flaky 三处按上述放宽完成。
+
+**坑点**：
+- scheduler 后端测试涉及 subprocess——用 `monkeypatch.setattr("subprocess.run", ...)` 而非真跑 systemd。
+- scheduler 后端涉及 `os.fork`：用 `unittest.mock` 的 `patch("os.fork")`，**别** `os.fork = lambda: 0`，会改全局。
+- 强化断言过程中若暴露 bug（如 T16a 解析回归），**升级为 T16a-erratum 一个独立 fix**，
+  不要塞进 T37 commit。
+
+---
+
+## M9 验收挂账（最终清算，所有前置必须绿）
+
+### T38 [LOW] §6 自我验收标准 + T07 smoke 解锁  ⏳
+**内容**：`docs/MASTER-PLAN.md` §6 工程自身 Definition of Done 6 条全 `[ ]` 未填，
+  T07 验收 smoke 永久 `@pytest.mark.skip`，是项目自证"做完了"的最后一道关。
+
+**清单**（每条对应原 §6 checkbox）：
+1. **`python -m harness --test -- "做一个 TODO web app"` 端到端跑通**——
+   当前 `tests/test_pipeline.py:556` 永久 skip。本任务**不**做无 token 的端到端（那是
+   测试人员的工作），而是把 skip 改为 `@pytest.mark.slow`，并在 README 写明：
+   "需要环境装好 claude CLI + ANTHROPIC_API_KEY；本机跑一次 `python -m harness --test -- xxx`"。
+   接受这一条不能被 CI 验证，但 README 写明流程。
+2. **architect 档 token < 10%** —— `usage` 统计已暴露，新加一段 `tests/test_t38_architect_share.py`：
+   - mock ModelRouter.make_call，让它返回固定大 usage；
+   - 跑 Pipeline mock 全程的 call，调 `spent_by_tier`；
+   - 断言 architect 份额 < 0.10。
+3. **bug → reviewer blocker 回灌** —— `tests/test_inner_loop.py` 已存在该路径 coverage，
+   本任务加 1 个 e2e mock 断言：generate mock 输出含 `_self_bug_`，reviewer mock 报 blocker，
+   Pipeline 第二轮把 blocker 注入 prompt，生成修复版。
+4. **Linear 项目流转**（或优雅降级）—— 现有 `tests/test_linear_sync.py` 已覆盖降级（无 key 时 in-memory）；
+   本任务补 1 个测试：填了 `LINEAR_API_KEY` 但 API 端点 500 → 也降级 + log warning。
+5. **opencode/codex mock 可插拔** —— T32 已升级为 registry。
+6. **覆盖率 ≥80% + router/score_card/artifacts 重点** —— 当前 84%，本任务在 tests/test_t38_focus.py
+   写断言"这三模块 ≥90%"（可用 `pytest --cov` subprocess 后解析）。
+
+**验收**：
+- 6 子项要么测试转绿，要么 `docs/MASTER-PLAN.md` §6 的 checkbox 被打上 `[x]` 并引向具体文档说明。
+- T07 smoke 不再是永久 skip，恢复为 `@pytest.mark.slow`。
+- README 与 docs/MASTER-PLAN.md §6 status 一致。
+
+**坑点**：
+- §6 第 1 条端到端是人工跑——本任务**不**写 fake e2e（在 T37 scheduler 后端已经证明 fake 测的边界），
+  老实把 skip 解禁为 slow，由人跑一次。
+- 不要"凑"覆盖率——若 router/score_card/artifacts 三个月内低于 90%，写 task 让它升，**不要**把 target 改成 85%。
+- T38 commit 应是**最后一个合并 commit**（README + MASTER-PLAN + tests）。
+
+---
+
 ## 给执行模型的执行协议（EXECUTOR PROTOCOL — 开工前必读）
 
 > 你是**执行者**，不是设计者。唯一事实来源是本文件（`docs/TASKS.md`）。
@@ -373,18 +913,27 @@ stub 的 `NotImplementedError` 文案明确点名类名便于诊断。
 ### ① 铁律（违反任一条 → 立刻停手）
 
 1. **一次只做一个任务**，按依赖顺序来。禁止合并任务、禁止跳序、禁止"顺手重构"清单外的任何东西。
-2. **T21 已搁置——绝对不要碰**（不动 budget / `check_budget` / `_instance` / `BudgetExceeded`）。
+2. **T21 是 T29 的前置拍板项**——T29 未拍板前，T21 描述的代码区域（`check_budget` /
+   `BudgetExceeded` / `_instance`）仍**不动**。T29 拍板后照 T29 任务说明执行二选一。
 3. **依赖顺序**（先地基，后特性）：
-   `T17 → T20 → T19 → T18 → T22 → 然后才是 M4（T16a–e）→ 最后 T23–T27`。
-   被 `blockedBy` 的任务，前置没做完不许开工。**不许挑软柿子先做 T24–T27 的重构**。
+   `T17 → T20 → T19 → T18 → T22 → M4（T16a–e）→ T23–T27
+   → M5b（T28 → T29 ↔ T30 并行 → T31 → T32）
+   → M6（T33）
+   → M7（T35 → T36）
+   → M8（T37）
+   → M9（T38）`
+   被 `blockedBy` 的任务，前置没做完不许开工。**不许挑软柿子先做 T36/T37 而跳 T28/T30。**
 4. **强制 TDD**：先写会失败的测试（RED）→ 跑，确认真的失败 → 写最小实现（GREEN）→ 跑绿 → 重构。
    没有先写测试，不许写实现。
 5. **不可变硬规则**：禁止原地修改对象、**禁止写 `os.environ`**（这正是 T23 要修的病，别再犯）。要改就返回新副本。
 6. 文件 **<800 行**、函数 **<50 行**、嵌套 **<4 层**。
-7. **全量测试必须保持绿**（当前基线约 318 passed），覆盖率 **≥80%**。你的改动不许让任何已有测试变红。
+7. **全量测试必须保持绿**（当前基线约 **523 passed / 2 skipped**），覆盖率 **≥80%**。你的改动不许让任何已有测试变红。
 8. 只用 **worker 档便宜模型**自测调试。**禁止调用 architect/Opus 档**——那些位置只允许出现在
    `config/models.yaml` 路由指定处。
 9. 不删除、不覆盖你没创建的东西；不联网发布任何内容。
+10. **任务里的 `file:line` 必 grep**：M5 及之后的几乎所有行号引用都来自审查报告，**必须**
+    `grep -n` 核验真实位置再动手；同样规则适用于 §3「依赖顺序」中提到的函数名。
+11. **禁止"凑绿灯"**：PR 不能仅为了让 CI 转绿而改测试或禁测试；遇 fail 先理解根因。
 
 ### ② 每个任务的执行循环（照抄）
 
