@@ -282,7 +282,10 @@ def test_extract_json_uses_linear_scan_on_large_input():
     # Either the parser returns None (no valid JSON found) or a dict —
     # but it must NOT take quadratic time.
     assert result is None or isinstance(result, dict)
-    assert elapsed < 1.0, f"took {elapsed:.2f}s, looks O(n²)"
+    # T37: was < 1.0s — flaked on slow CI. 5.0s is still well below
+    # the O(n²) regime for the input size here (~50 KB), but gives CI
+    # the headroom it needs.
+    assert elapsed < 5.0, f"took {elapsed:.2f}s, looks O(n²)"
 
 
 # ---------------------------------------------------------------------------

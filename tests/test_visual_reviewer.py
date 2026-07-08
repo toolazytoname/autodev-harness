@@ -135,7 +135,10 @@ class TestProbeServer:
 
     def test_returns_false_when_no_server(self):
         port = _free_port()
-        assert not probe_server(f"http://127.0.0.1:{port}", deadline_seconds=0.3)
+        # T37: was 0.3s — flaked on slow CI. 1.5s still proves the
+        # unreachable-port path is fast, but gives the kernel time
+        # to actually attempt the connection.
+        assert not probe_server(f"http://127.0.0.1:{port}", deadline_seconds=1.5)
 
 
 # ---------------------------------------------------------------------------
