@@ -33,6 +33,7 @@ Public API::
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -42,6 +43,9 @@ import pydantic
 from harness.adapters.base import AdapterError, QuotaExhaustedError
 from harness.atomic_io import AtomicIOError, atomic_write_json, read_json_or_raise
 from harness.scheduler import cancel_wakeup, register_wakeup
+
+
+_log = logging.getLogger(__name__)
 
 
 HOLD_RELATIVE_PATH = Path(".runner") / "quota-hold.json"
@@ -75,6 +79,14 @@ class QuotaHold(pydantic.BaseModel):
     task_id: Optional[str] = None
     job_id: str
     resume_count: int = 0
+    # T31: surfaces OS-level wake-up registration failures to the
+    # operator. ``True`` when the scheduler (launchd / systemd / at /
+    # sleeper) accepted the timer; ``False`` when the registration
+    # raised and the pipeline relies on a manual ``--continue`` to
+    # resume. Defaults to ``True`` so legacy T16e hold files round-trip
+    # cleanly — pre-T31, every hold was *assumed* to have a working
+    # wake-up, and we keep that assumption for backward compat.
+    wakeup_registered: bool = True
 
 
 class QuotaResumeExhaustedError(QuotaExhaustedError):
@@ -191,6 +203,36 @@ def begin_resume(
     return next_count
 
 
+def _strip_reset_hint_prefix(raw: Optional[str]) -> Optional[datetime]:
+    """Strip the optional ``resets_at=`` / ``retry_after=`` / ``resume_at=``
+    prefix from a reset_hint string and parse the remainder as ISO-8601.
+
+    T31 Bug A: :func:`enter_quota_hold` used to feed the raw
+    ``exc.reset_hint`` (which ``harness.quota._extract_reset_hint``
+    emits as ``"resets_at=<iso>"`` for logging) into
+    :class:`ResetHint.reset_at: Optional[datetime]` — pydantic refused
+    to parse the prefixed string and the hold crashed at the worst
+    possible moment.
+
+    Returns ``None`` when the string is missing, has an unparseable
+    datetime after stripping, or doesn't look like a reset time at all
+    (in which case the caller should fall back to ``retry_after_seconds``
+    or the strategy math).
+    """
+    if not raw:
+        return None
+    # Strip the "key=" prefix if present; remainder is the value.
+    body = raw.split("=", 1)[-1].strip() if "=" in raw else raw.strip()
+    # An empty body or a "retry_after=...s" form is not a reset time.
+    if not body or body.endswith("s") and not any(c.isdigit() and c != "s" for c in body):
+        # crude: "3600s" → not a datetime, leave it to retry_after_seconds
+        return None
+    try:
+        return datetime.fromisoformat(body)
+    except ValueError:
+        return None
+
+
 def enter_quota_hold(
     project_dir: Path,
     exc: QuotaExhaustedError,
@@ -211,6 +253,16 @@ def enter_quota_hold(
     each auto-resume.
 
     Returns the path to the written ``quota-hold.json``.
+
+    T31 changes
+    -----------
+    * Strip the ``resets_at=`` prefix from ``exc.reset_hint`` before
+      passing it to :class:`ResetHint` (T31 Bug A). Unparseable hints
+      are silently dropped so the hold is always written.
+    * On ``register_wakeup`` failure, log the exception (no longer
+      silent ``pass``) and record ``wakeup_registered=False`` on the
+      hold so the operator sees the manual-action warning in
+      ``harness status`` (T31 Bug B).
     """
     from harness.quota import next_reset, ResetHint, ResetStrategy
 
@@ -218,10 +270,18 @@ def enter_quota_hold(
     # so a missing strategy still produces a sane wake-up time.
     strategy = ResetStrategy.ROLLING
     params = dict(strategy_params or {"window_hours": 5})
-    hint = ResetHint(
-        reset_at=exc.reset_hint if (exc.reset_hint and "T" in (exc.reset_hint or "")) else None,
-        retry_after_seconds=exc.retry_after_seconds,
-    ) if exc.reset_hint or exc.retry_after_seconds else None
+
+    # T31 Bug A: strip the "resets_at=" prefix that
+    # ``_extract_reset_hint`` adds for display. Unparseable / missing
+    # hints fall through to the strategy math, never to a crash.
+    parsed_reset_at = _strip_reset_hint_prefix(exc.reset_hint)
+    if parsed_reset_at is not None or exc.retry_after_seconds is not None:
+        hint = ResetHint(
+            reset_at=parsed_reset_at,
+            retry_after_seconds=exc.retry_after_seconds,
+        )
+    else:
+        hint = None
 
     resume_at = next_reset(
         strategy,
@@ -236,6 +296,9 @@ def enter_quota_hold(
     digest = hashlib.sha1(str(project_dir.resolve()).encode("utf-8")).hexdigest()[:12]
     job_id = f"harness-{digest}"
 
+    # First write the hold so the operator can inspect it regardless of
+    # the wake-up outcome. T31 Bug B: ``wakeup_registered`` is updated
+    # in-place after the registration attempt.
     hold = QuotaHold(
         tier=exc.tier or "unknown",
         provider=exc.provider or "unknown",
@@ -247,12 +310,14 @@ def enter_quota_hold(
         task_id=task_id,
         job_id=job_id,
         resume_count=resume_count,
+        wakeup_registered=True,
     )
     path = write_hold(project_dir, hold)
 
-    # Register the OS-level wake-up. The scheduler is best-effort; a
-    # registration failure must not stop us from returning the path so
-    # the operator can still inspect (or cancel) the hold.
+    # T31 Bug B: register the OS-level wake-up, and *log* (not swallow)
+    # any failure so the operator can recover manually. The hold file
+    # is rewritten with ``wakeup_registered=False`` so ``harness status``
+    # surfaces the manual-action warning.
     try:
         resume_cmd = f'python -m harness --continue "{project_dir}"'
         register_wakeup(
@@ -261,8 +326,20 @@ def enter_quota_hold(
             job_id=job_id,
         )
     except Exception:
-        # Don't propagate — the hold file itself is the source of truth.
-        pass
+        _log.error(
+            "quota-hold wakeup registration failed for project %s "
+            "(job_id=%s); operator must re-run with "
+            "'python -m harness --continue' manually",
+            project_dir,
+            job_id,
+            exc_info=True,
+        )
+        # Rewrite the hold with wakeup_registered=False so the status
+        # command reflects reality. ``model_copy`` keeps pydantic's
+        # frozen=True contract without mutating the instance.
+        failed_hold = hold.model_copy(update={"wakeup_registered": False})
+        write_hold(project_dir, failed_hold)
+        path = project_dir / HOLD_RELATIVE_PATH
 
     return path
 
@@ -318,6 +395,12 @@ def format_hold_status(hold: QuotaHold, *, now: Optional[datetime] = None) -> st
         f"  resume at:   {resume_local} ({countdown})",
         f"  resume count: {hold.resume_count} / {MAX_AUTO_RESUME}",
     ]
+    # T31 Bug B: when the OS scheduler refused to register a wake-up,
+    # the hold file is the only record — surface that loudly so the
+    # operator doesn't wait for an auto-resume that will never come.
+    if not hold.wakeup_registered:
+        lines.append("  ⚠ WARN: wake-up not registered — manual action required")
+        lines.append("    run: python -m harness --continue " + str(hold.project_dir))
     if hold.phase or hold.task_id:
         where_parts = []
         if hold.phase:

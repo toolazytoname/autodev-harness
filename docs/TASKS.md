@@ -435,7 +435,7 @@ CalledProcessError/TimeoutExpired 分支未直接走，T26 之后一直如此）
 
 ---
 
-### T29 [CRITICAL] T21 预算熔断拍板：接线或拆除  ⏳
+### T29 [CRITICAL] T21 预算熔断拍板：接线或拆除  ✅ 2026-07-08
 **内容**：T21 [HIGH] 自首个 ⏳ 留下以来未拍板。三轮审查均确认现状是
 **假承诺 + 死代码 + 双重定义**，无人值守跑批 token 无上限（MASTER-PLAN §6
 第 2 条悬空）。本任务**强制二选一**，不允许"半截接线"。
@@ -481,9 +481,18 @@ CalledProcessError/TimeoutExpired 分支未直接走，T26 之后一直如此）
 
 **拍板记录**：A（接线）— 用户 2026-07-08 拍板；实施排在 T28 之后，与 T30 并行（依赖顺序 `T28 → T29 ↔ T30 → T31 → T32`）。
 
+**完成记录**：A 路径落实 — `config/models.yaml` 每档加 `max_tokens`（architect 2M / reviewer 5M / worker 10M），
+`router.py` 新增 `TierConfig.max_tokens` + `ModelSpec.max_tokens`；`check_budget` 真正比较 spent vs cap，
+到 `stop_at_percent` 抛 `BudgetExceeded`、`warn_at_percent` 记日志。删除死代码 `ModelRouter._instance` 单例
+和 `router.py:326` 的 `Usage` 重复定义（仅保留 `adapters/base.py:23`）。
+`pipeline._call_agent` 调 `router.check_budget(stage)` 在 adapter 之前；`__main__.py` 新增 `EXIT_BUDGET_EXCEEDED = 137`
+与 PipelineError 区分（CI / cron 可识别）。`visual_reviewer.run_visual_review` 返回 `(ScoreCard, Usage)` 携带真
+实 token，`reviewer_runner._run_visual_reviewer` 不再用空 `Usage()` 占位。16 新增在 `tests/test_t29_budget_circuit.py`，
+全量 547 passed / 2 deselected（slow 标记），覆盖率 84%+。
+
 ---
 
-### T30 [CRITICAL] Adapter provider 解耦 + JSON envelope 拆出  ⏳
+### T30 [CRITICAL] Adapter provider 解耦 + JSON envelope 拆出  ✅ 2026-07-08
 **内容**：两件高度相关，必须一起做：
 
 **Bug A：worker 层 (MiniMax) 配额永远识别不出**
@@ -533,6 +542,16 @@ CalledProcessError/TimeoutExpired 分支未直接走，T26 之后一直如此）
 - 拆 json_envelope 时务必保证 `_extract_structured_error` 的调用方仍可达
   （先 grep：`grep -rn '_extract_structured_error' harness/`）。
 - provider 字符串约定：`router._load_config` 已加载；不要重复加载，**复用**。
+
+**完成记录**：两 bug + 1 结构拆分全部落实 — (A) `_classify_quota` 不再硬编码 `provider="anthropic"`，改为遍历
+`_QUOTA_CONFIG.providers`（anthropic / MiniMax / ...）取首个命中；`grep 'provider="anthropic"' claude.py` 现仅剩
+docstring 引用。(B) `_parse_json_output` 解析到 `is_error: true` 即抛 `InvalidResponseError`（已在
+`NON_RETRYABLE_EXCEPTIONS`），携带 status_code + error text，避免下游拿到空串当成功。结构：抽出
+`harness/adapters/json_envelope.py`(206 行) 承载 `parse_json_output` / `loads_json_envelope` / `strip_code_fence` /
+`extract_json` / `parse_usage` 五函数，provider-agnostic；`claude.py` 保留 5 个方法 delegate 维持旧测试合约
+（`adapter._extract_json` 等 patch 仍可达）；`_strip_code_fence` 内联 `import re` 与 `build_subprocess_env` 内联
+`import os` 全部上移到模块顶。`claude.py` 711→633 行（完整 errors/subprocess 拆分留给 T36，本任务仅拆 JSON）。
+5 新增在 `tests/test_t30_provider_classify.py`，全量 547 passed / 2 deselected，覆盖率 84%+。
 
 ---
 
