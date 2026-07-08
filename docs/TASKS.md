@@ -555,7 +555,7 @@ docstring 引用。(B) `_parse_json_output` 解析到 `is_error: true` 即抛 `I
 
 ---
 
-### T31 [HIGH] 配额挂起：写盘+唤醒注册两条 fail-loud  ⏳
+### T31 [HIGH] 配额挂起：写盘+唤醒注册两条 fail-loud  ✅ 2026-07-08
 **内容**：两处都让"配额耗尽=自动恢复"沦为承诺：
 
 **Bug A：reset_hint 带前缀触 ValidationError**
@@ -597,6 +597,18 @@ docstring 引用。(B) `_parse_json_output` 解析到 `is_error: true` 即抛 `I
   改 dataclass 字段顺序或名称会连锁；先全数迁移。
 - `quota_hold.HoldRecord`（如存在）加字段要**附 default `True`** 保持向后兼容老 hold 文件
   —— 读取到旧 hold 视为 `wakeup_registered=True`（旧版未记）。
+
+**完成记录**：两 bug 全部修好 — (A) `enter_quota_hold` 不再把 `resets_at=<iso>` 字符串塞
+`ResetHint(reset_at=...)`（pydantic 拒绝 → ValidationError → 整个挂起崩在最不该崩的瞬间）；
+新加私有 `_strip_reset_hint_prefix()` 剥 `resets_at=` / `retry_after=` / `resume_at=` 前缀后
+`fromisoformat`，不可解析时静默回落 strategy 数学，保证 hold 永远写盘。(B) `register_wakeup`
+外的 `except Exception: pass` 改为 `_log.error(..., exc_info=True)`；`QuotaHold` 新增字段
+`wakeup_registered: bool = True`（默认值保 T16e 老 hold 文件向后兼容 → `read_hold` 旧记录
+读回 True），失败后用 `hold.model_copy(update=...)` 写出 `wakeup_registered=False` 的新版；
+`format_hold_status` 在 `wakeup_registered=False` 时追加 `⚠ WARN: wake-up not registered`
++ 手动 `--continue` 命令。13 新增在 `tests/test_t31_reset_hint_parse.py` (197 行) +
+`tests/test_t31_wakeup_logging.py` (192 行)，全量 560 passed / 2 deselected，覆盖率 84%+；
+`harness/quota_hold.py` 327→410 行（仍 <800）。
 
 ---
 
