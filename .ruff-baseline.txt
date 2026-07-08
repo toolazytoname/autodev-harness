@@ -1,0 +1,358 @@
+harness/__main__.py:13:1: I001 [*] Import block is un-sorted or un-formatted
+harness/__main__.py:30:5: F401 [*] `harness.quota_hold.enter_quota_hold` imported but unused
+harness/__main__.py:185:45: F841 [*] Local variable `exc` is assigned to but never used
+harness/acceptance.py:21:1: UP035 [*] Import from `collections.abc` instead: `Iterable`
+harness/acceptance.py:21:30: F401 [*] `typing.Optional` imported but unused
+harness/adapters/base.py:7:1: I001 [*] Import block is un-sorted or un-formatted
+harness/adapters/base.py:31:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:32:20: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:33:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:34:18: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:155:15: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:156:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:157:21: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:158:30: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:219:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:220:18: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:221:25: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:278:40: F841 [*] Local variable `primary_exc` is assigned to but never used
+harness/adapters/base.py:292:39: F841 [*] Local variable `primary_exc` is assigned to but never used
+harness/adapters/base.py:315:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:316:18: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:388:16: F401 [*] `math` imported but unused
+harness/adapters/base.py:401:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:402:18: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:403:25: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:447:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/base.py:448:18: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:14:1: I001 [*] Import block is un-sorted or un-formatted
+harness/adapters/claude.py:28:5: F401 [*] `harness.adapters.base.InvalidResponseError` imported but unused
+harness/adapters/claude.py:67:15: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:68:14: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:69:6: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:139:14: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:183:17: B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+harness/adapters/claude.py:252:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:253:18: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:254:25: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:300:14: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:302:25: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:352:14: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:411:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:412:18: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:454:37: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:472:10: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:526:10: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:572:56: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/claude.py:608:57: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/codex.py:41:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/codex.py:42:18: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/json_envelope.py:18:1: I001 [*] Import block is un-sorted or un-formatted
+harness/adapters/json_envelope.py:174:32: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/opencode.py:42:19: UP007 [*] Use `X | Y` for type annotations
+harness/adapters/opencode.py:43:18: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:7:1: I001 [*] Import block is un-sorted or un-formatted
+harness/artifacts.py:9:8: F401 [*] `json` imported but unused
+harness/artifacts.py:10:8: F401 [*] `os` imported but unused
+harness/artifacts.py:21:5: F401 [*] `harness.atomic_io.read_text_or_raise` imported but unused
+harness/artifacts.py:25:8: F401 [*] `yaml` imported but unused
+harness/artifacts.py:46:42: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:46:51: UP037 [*] Remove quotes from type annotation
+harness/artifacts.py:64:12: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:65:15: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:66:11: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:67:12: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:68:11: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:69:13: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:70:9: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:82:20: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:83:21: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:89:17: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:90:80: UP017 [*] Use `datetime.UTC` alias
+harness/artifacts.py:231:18: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:270:9: SIM102 Use a single `if` statement instead of nested `if` statements
+harness/artifacts.py:330:58: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:353:52: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:380:47: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:432:47: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:483:43: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:531:40: UP007 [*] Use `X | Y` for type annotations
+harness/artifacts.py:554:6: UP007 [*] Use `X | Y` for type annotations
+harness/atomic_io.py:84:13: SIM105 Use `contextlib.suppress(OSError)` instead of `try`-`except`-`pass`
+harness/atomic_io.py:92:9: SIM105 Use `contextlib.suppress(FileNotFoundError)` instead of `try`-`except`-`pass`
+harness/generator.py:13:1: I001 [*] Import block is un-sorted or un-formatted
+harness/generator.py:21:25: F401 [*] `harness.env.EnvVars` imported but unused
+harness/generator.py:66:12: UP037 [*] Remove quotes from type annotation
+harness/generator.py:76:23: UP007 [*] Use `X | Y` for type annotations
+harness/inner_loop.py:26:1: I001 [*] Import block is un-sorted or un-formatted
+harness/inner_loop.py:49:5: F401 [*] `harness.reviewer_runner.run_single_reviewer` imported but unused
+harness/inner_loop.py:50:5: F401 [*] `harness.reviewer_runner._run_visual_reviewer` imported but unused
+harness/inner_loop.py:78:18: UP007 [*] Use `X | Y` for type annotations
+harness/inner_loop.py:103:32: UP017 [*] Use `datetime.UTC` alias
+harness/inner_loop.py:173:13: UP007 [*] Use `X | Y` for type annotations
+harness/inner_loop.py:236:51: UP007 [*] Use `X | Y` for type annotations
+harness/inner_loop.py:393:24: B905 [*] `zip()` without an explicit `strict=` parameter
+harness/inner_loop.py:545:13: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:33:1: I001 [*] Import block is un-sorted or un-formatted
+harness/linear_sync.py:40:25: F401 [*] `dataclasses.dataclass` imported but unused
+harness/linear_sync.py:44:1: UP035 [*] Import from `collections.abc` instead: `Iterable`
+harness/linear_sync.py:44:25: F401 [*] `typing.Iterable` imported but unused
+harness/linear_sync.py:77:46: UP017 [*] Use `datetime.UTC` alias
+harness/linear_sync.py:110:10: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:112:46: UP017 [*] Use `datetime.UTC` alias
+harness/linear_sync.py:140:21: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:141:21: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:159:51: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:179:30: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:232:21: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:233:21: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:301:9: F811 Redefinition of unused `projects` from line 283
+harness/linear_sync.py:320:48: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:342:21: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:343:21: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:377:32: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:408:24: UP007 [*] Use `X | Y` for type annotations
+harness/linear_sync.py:510:18: UP007 [*] Use `X | Y` for type annotations
+harness/logging_setup.py:23:1: I001 [*] Import block is un-sorted or un-formatted
+harness/logging_setup.py:66:18: UP007 [*] Use `X | Y` for type annotations
+harness/logging_setup.py:67:12: UP007 [*] Use `X | Y` for type annotations
+harness/logging_setup.py:111:17: SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+harness/logging_setup.py:150:24: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:12:1: I001 [*] Import block is un-sorted or un-formatted
+harness/pipeline.py:16:8: F401 [*] `sys` imported but unused
+harness/pipeline.py:19:1: UP035 [*] Import from `collections.abc` instead: `Callable`
+harness/pipeline.py:40:28: F401 [*] `harness.router.BudgetExceeded` imported but unused
+harness/pipeline.py:121:15: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:122:12: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:123:12: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:164:1: I001 [*] Import block is un-sorted or un-formatted
+harness/pipeline.py:248:17: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:249:21: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:250:28: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:251:22: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:251:31: UP037 [*] Remove quotes from type annotation
+harness/pipeline.py:252:27: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:252:52: UP037 [*] Remove quotes from type annotation
+harness/pipeline.py:265:49: UP037 [*] Remove quotes from type annotation
+harness/pipeline.py:314:42: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:656:45: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:684:32: UP007 [*] Use `X | Y` for type annotations
+harness/pipeline.py:731:16: UP037 [*] Remove quotes from type annotation
+harness/pipeline.py:768:35: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:27:1: I001 [*] Import block is un-sorted or un-formatted
+harness/quota.py:33:1: UP035 [*] Import from `collections.abc` instead: `Mapping`
+harness/quota.py:38:35: F401 [*] `harness.adapters.base.AdapterError` imported but unused
+harness/quota.py:85:15: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:86:26: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:94:22: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:95:11: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:214:34: UP017 [*] Use `datetime.UTC` alias
+harness/quota.py:215:26: UP017 [*] Use `datetime.UTC` alias
+harness/quota.py:242:17: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:243:26: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:246:29: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:270:6: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:295:12: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:306:22: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:328:12: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:328:27: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:336:20: UP007 [*] Use `X | Y` for type annotations
+harness/quota.py:337:17: UP007 [*] Use `X | Y` for type annotations
+harness/quota_hold.py:34:1: I001 [*] Import block is un-sorted or un-formatted
+harness/quota_hold.py:43:35: F401 [*] `harness.adapters.base.AdapterError` imported but unused
+harness/quota_hold.py:78:12: UP007 [*] Use `X | Y` for type annotations
+harness/quota_hold.py:79:14: UP007 [*] Use `X | Y` for type annotations
+harness/quota_hold.py:125:37: UP007 [*] Use `X | Y` for type annotations
+harness/quota_hold.py:206:35: UP007 [*] Use `X | Y` for type annotations
+harness/quota_hold.py:206:53: UP007 [*] Use `X | Y` for type annotations
+harness/quota_hold.py:241:12: UP007 [*] Use `X | Y` for type annotations
+harness/quota_hold.py:242:14: UP007 [*] Use `X | Y` for type annotations
+harness/quota_hold.py:243:22: UP007 [*] Use `X | Y` for type annotations
+harness/quota_hold.py:267:1: I001 [*] Import block is un-sorted or un-formatted
+harness/quota_hold.py:288:26: UP017 [*] Use `datetime.UTC` alias
+harness/quota_hold.py:305:35: UP017 [*] Use `datetime.UTC` alias
+harness/quota_hold.py:356:5: SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+harness/quota_hold.py:364:49: UP007 [*] Use `X | Y` for type annotations
+harness/quota_hold.py:369:31: UP017 [*] Use `datetime.UTC` alias
+harness/quota_hold.py:371:34: UP017 [*] Use `datetime.UTC` alias
+harness/research_validation.py:19:1: I001 [*] Import block is un-sorted or un-formatted
+harness/research_validation.py:23:1: UP035 [*] Import from `collections.abc` instead: `Iterable`
+harness/research_validation.py:191:12: UP007 [*] Use `X | Y` for type annotations
+harness/research_validation.py:192:12: UP007 [*] Use `X | Y` for type annotations
+harness/research_validation.py:417:48: UP007 [*] Use `X | Y` for type annotations
+harness/research_validation.py:501:9: UP032 [*] Use f-string instead of `format` call
+harness/reviewer_runner.py:17:1: I001 [*] Import block is un-sorted or un-formatted
+harness/reviewer_runner.py:69:18: UP007 [*] Use `X | Y` for type annotations
+harness/reviewer_runner.py:70:17: UP007 [*] Use `X | Y` for type annotations
+harness/reviewer_runner.py:110:17: UP007 [*] Use `X | Y` for type annotations
+harness/reviewer_runner.py:128:12: UP007 [*] Use `X | Y` for type annotations
+harness/reviewer_runner.py:198:17: UP007 [*] Use `X | Y` for type annotations
+harness/reviewer_runner.py:328:15: UP007 [*] Use `X | Y` for type annotations
+harness/reviewer_runner.py:329:21: UP007 [*] Use `X | Y` for type annotations
+harness/reviewer_runner.py:376:18: UP007 [*] Use `X | Y` for type annotations
+harness/reviewer_runner.py:377:17: UP007 [*] Use `X | Y` for type annotations
+harness/reviewers.py:21:18: UP007 [*] Use `X | Y` for type annotations
+harness/reviewers.py:49:22: UP007 [*] Use `X | Y` for type annotations
+harness/reviewers.py:50:21: UP007 [*] Use `X | Y` for type annotations
+harness/reviewers.py:71:19: UP007 [*] Use `X | Y` for type annotations
+harness/router.py:17:1: I001 [*] Import block is un-sorted or un-formatted
+harness/router.py:21:36: F401 [*] `dataclasses.field` imported but unused
+harness/router.py:28:25: F401 [*] `harness.env.EnvVars` imported but unused
+harness/router.py:28:34: F401 [*] `harness.env.api_key_for` imported but unused
+harness/router.py:54:15: UP007 [*] Use `X | Y` for type annotations
+harness/router.py:55:15: UP007 [*] Use `X | Y` for type annotations
+harness/router.py:56:17: UP007 [*] Use `X | Y` for type annotations
+harness/router.py:106:15: UP007 [*] Use `X | Y` for type annotations
+harness/router.py:107:15: UP007 [*] Use `X | Y` for type annotations
+harness/router.py:108:17: UP007 [*] Use `X | Y` for type annotations
+harness/router.py:113:14: UP007 [*] Use `X | Y` for type annotations
+harness/router.py:151:26: UP037 [*] Remove quotes from type annotation
+harness/router.py:151:27: F821 Undefined name `Usage`
+harness/router.py:186:22: UP007 [*] Use `X | Y` for type annotations
+harness/router.py:263:41: UP037 [*] Remove quotes from type annotation
+harness/router.py:263:42: F821 Undefined name `Usage`
+harness/scheduler.py:36:1: UP035 [*] Import from `collections.abc` instead: `Callable`
+harness/scheduler.py:88:14: UP007 [*] Use `X | Y` for type annotations
+harness/scheduler.py:122:44: UP007 [*] Use `X | Y` for type annotations
+harness/scheduler.py:223:5: F841 Local variable `label` is assigned to but never used
+harness/scheduler.py:231:9: SIM105 Use `contextlib.suppress(FileNotFoundError)` instead of `try`-`except`-`pass`
+harness/scheduler.py:289:13: SIM105 Use `contextlib.suppress(FileNotFoundError)` instead of `try`-`except`-`pass`
+harness/scheduler.py:341:1: I001 [*] Import block is un-sorted or un-formatted
+harness/scheduler.py:344:24: UP017 [*] Use `datetime.UTC` alias
+harness/score_card.py:12:1: I001 [*] Import block is un-sorted or un-formatted
+harness/score_card.py:15:8: F401 [*] `textwrap` imported but unused
+harness/score_card.py:19:20: F401 [*] `typing.Any` imported but unused
+harness/score_card.py:75:46: UP017 [*] Use `datetime.UTC` alias
+harness/score_card.py:80:46: UP037 [*] Remove quotes from type annotation
+harness/score_card.py:188:6: UP007 [*] Use `X | Y` for type annotations
+harness/score_card.py:211:15: UP007 [*] Use `X | Y` for type annotations
+harness/score_card.py:307:15: UP007 [*] Use `X | Y` for type annotations
+harness/slop_check.py:28:1: UP035 [*] Import from `collections.abc` instead: `Iterable`
+harness/slop_check.py:187:27: UP007 [*] Use `X | Y` for type annotations
+harness/slop_check.py:209:31: UP007 [*] Use `X | Y` for type annotations
+harness/ui_phase.py:17:1: I001 [*] Import block is un-sorted or un-formatted
+harness/ui_phase.py:20:8: F401 [*] `re` imported but unused
+harness/ui_phase.py:42:1: E402 Module level import not at top of file
+harness/ui_phase.py:42:1: I001 [*] Import block is un-sorted or un-formatted
+harness/ui_phase.py:96:31: UP007 [*] Use `X | Y` for type annotations
+harness/ui_phase.py:251:10: F821 Undefined name `AgentResult`
+harness/visual_reviewer.py:42:1: I001 [*] Import block is un-sorted or un-formatted
+harness/visual_reviewer.py:46:8: F401 [*] `subprocess` imported but unused
+harness/visual_reviewer.py:50:20: F401 [*] `typing.Optional` imported but unused
+harness/visual_reviewer.py:58:31: F401 [*] `harness.artifacts.ensure_dir` imported but unused
+harness/visual_reviewer.py:231:28: UP037 [*] Remove quotes from type annotation
+harness/visual_reviewer.py:290:17: SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+harness/visual_reviewer.py:339:23: UP037 [*] Remove quotes from type annotation
+harness/worktree.py:74:18: UP007 [*] Use `X | Y` for type annotations
+harness/worktree.py:128:18: UP007 [*] Use `X | Y` for type annotations
+harness/worktree.py:163:9: SIM105 Use `contextlib.suppress(InnerLoopError)` instead of `try`-`except`-`pass`
+harness/worktree.py:193:18: UP007 [*] Use `X | Y` for type annotations
+harness/worktree.py:223:18: UP007 [*] Use `X | Y` for type annotations
+tests/test_adapters.py:7:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_adapters.py:95:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_adapters.py:122:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_adapters.py:142:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_adapters.py:168:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_adapters.py:187:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_adapters.py:244:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_artifacts.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_artifacts.py:114:9: F841 Local variable `sub` is assigned to but never used
+tests/test_atomic_io.py:7:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_atomic_state_integration.py:13:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_error_classification.py:28:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_error_classification.py:129:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_error_classification.py:154:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_error_classification.py:332:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_error_classification.py:358:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_error_classification.py:381:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_error_classification.py:471:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_inner_loop.py:9:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_inner_loop.py:439:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_linear_sync.py:18:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_linear_sync.py:285:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_linear_sync.py:323:40: UP037 [*] Remove quotes from type annotation
+tests/test_linear_sync.py:323:41: F821 Undefined name `AgentResult`
+tests/test_opendesign_bundle.py:17:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_pipeline.py:7:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_research_validation.py:9:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_reviewers.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_reviewers.py:206:9: F841 Local variable `required_endings` is assigned to but never used
+tests/test_router.py:6:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_score_card.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_score_card.py:44:28: UP017 [*] Use `datetime.UTC` alias
+tests/test_slop_check.py:8:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t16a_quota_classification.py:13:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t16a_quota_classification.py:178:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t16a_quota_classification.py:201:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t16b_next_reset.py:16:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t16b_next_reset.py:36:60: UP017 [*] Use `datetime.UTC` alias
+tests/test_t16c_fallback_downgrade.py:16:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t16c_fallback_downgrade.py:85:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t16c_fallback_downgrade.py:105:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t16c_fallback_downgrade.py:129:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t16d_quota_hold.py:19:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t16d_quota_hold.py:53:57: UP017 [*] Use `datetime.UTC` alias
+tests/test_t16d_quota_hold.py:54:54: UP017 [*] Use `datetime.UTC` alias
+tests/test_t16d_quota_hold.py:108:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t16d_quota_hold.py:114:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t16d_quota_hold.py:120:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t16d_quota_hold.py:127:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t16d_quota_hold.py:142:49: UP017 [*] Use `datetime.UTC` alias
+tests/test_t16d_quota_hold.py:159:49: UP017 [*] Use `datetime.UTC` alias
+tests/test_t16d_quota_hold.py:166:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t16d_quota_hold.py:190:49: UP017 [*] Use `datetime.UTC` alias
+tests/test_t16e_quota_observability.py:17:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t16e_quota_observability.py:57:55: UP017 [*] Use `datetime.UTC` alias
+tests/test_t16e_quota_observability.py:76:47: UP017 [*] Use `datetime.UTC` alias
+tests/test_t16e_quota_observability.py:89:39: UP017 [*] Use `datetime.UTC` alias
+tests/test_t16e_quota_observability.py:90:36: UP017 [*] Use `datetime.UTC` alias
+tests/test_t16e_quota_observability.py:282:9: F841 Local variable `rc` is assigned to but never used
+tests/test_t16e_quota_observability.py:294:9: F841 Local variable `rc` is assigned to but never used
+tests/test_t16e_quota_observability.py:343:9: F841 Local variable `captured` is assigned to but never used
+tests/test_t18_resume_precision.py:18:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t19_third_party_chain.py:12:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t19_third_party_chain.py:108:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t19_third_party_chain.py:196:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t19_third_party_chain.py:225:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t19_third_party_chain.py:248:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t19_third_party_chain.py:281:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t22_logging.py:10:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t23_no_environ_mutation.py:21:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t24_split_modules.py:17:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t24_split_modules.py:116:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t24_split_modules.py:173:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t24_split_modules.py:213:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t25_adapter_dry.py:18:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t25_adapter_dry.py:91:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t25_adapter_dry.py:101:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t25_adapter_dry.py:113:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t25_adapter_dry.py:188:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t25_adapter_dry.py:297:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_t26_config_robustness.py:20:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t26_config_robustness.py:61:10: B017 `pytest.raises(Exception)` should be considered evil
+tests/test_t26_config_robustness.py:130:10: B017 `pytest.raises(Exception)` should be considered evil
+tests/test_t26_config_robustness.py:147:10: B017 `pytest.raises(Exception)` should be considered evil
+tests/test_t26_config_robustness.py:166:10: B017 `pytest.raises(Exception)` should be considered evil
+tests/test_t26_config_robustness.py:186:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t26_config_robustness.py:226:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t27_env_cleanup.py:18:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t27_env_cleanup.py:134:9: F821 Undefined name `pytest`
+tests/test_t27_env_cleanup.py:148:9: F821 Undefined name `pytest`
+tests/test_t27_env_cleanup.py:162:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t28_merge_abort_on_conflict.py:26:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t29_budget_circuit.py:24:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t29_budget_circuit.py:320:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t30_provider_classify.py:23:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t31_reset_hint_parse.py:15:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t31_reset_hint_parse.py:69:58: UP017 [*] Use `datetime.UTC` alias
+tests/test_t31_reset_hint_parse.py:113:28: UP017 [*] Use `datetime.UTC` alias
+tests/test_t31_reset_hint_parse.py:154:28: UP017 [*] Use `datetime.UTC` alias
+tests/test_t31_wakeup_logging.py:19:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_t31_wakeup_logging.py:122:28: UP017 [*] Use `datetime.UTC` alias
+tests/test_t31_wakeup_logging.py:150:28: UP017 [*] Use `datetime.UTC` alias
+tests/test_t31_wakeup_logging.py:172:28: UP017 [*] Use `datetime.UTC` alias
+tests/test_t32_adapter_factory.py:29:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_visual_reviewer.py:13:1: I001 [*] Import block is un-sorted or un-formatted
+tests/test_visual_reviewer.py:398:1: I001 [*] Import block is un-sorted or un-formatted
+Found 356 errors.
+[*] 295 fixable with the `--fix` option (32 hidden fixes can be enabled with the `--unsafe-fixes` option).

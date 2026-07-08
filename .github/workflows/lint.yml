@@ -1,0 +1,58 @@
+name: lint
+
+# Ruff gate. We accept baseline noise on first run; the contract is
+# "lint job is online + configured" — chasing every E/F hit can wait
+# for a dedicated cleanup task. New code, however, must be clean.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    name: ruff check + format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        # Pinned to the version we test locally; Astral ships fast enough
+        # that pinning avoids surprise new rules.
+        run: pip install "ruff==0.6.9"
+
+      - name: ruff check (baseline-aware)
+        # T33 spec: accept baseline noise, fail only on NEW violations.
+        # ``--output-format=concise`` produces one-line-per-violation
+        # output that we can diff against the checked-in baseline.
+        # The job fails when the current output is a strict superset
+        # of the baseline (i.e. introduced new violations).
+        run: |
+          set -e
+          ruff check . --output-format=concise > /tmp/ruff-current.txt
+          # New violations = current lines that aren't already in the
+          # baseline. ``comm -23`` prints lines unique to the first
+          # input, in sorted order. We sort both sides because ruff's
+          # output ordering is unspecified.
+          new=$(comm -23 <(sort /tmp/ruff-current.txt) <(sort .ruff-baseline.txt) || true)
+          if [ -n "$new" ]; then
+            echo "❌ New ruff violations (not in baseline):"
+            echo "$new"
+            exit 1
+          fi
+          echo "✅ No new ruff violations (baseline: $(wc -l < .ruff-baseline.txt) lines)."
+
+      - name: ruff format --check
+        # Read-only formatting check. We don't run ``ruff format``
+        # (auto-apply) in CI — let humans decide when to reformat.
+        run: ruff format --check .

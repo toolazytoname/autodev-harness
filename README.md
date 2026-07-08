@@ -1,5 +1,8 @@
 # AutoDevHarness v2
 
+[![tests](https://github.com/toolazytoname/autodev-harness/actions/workflows/tests.yml/badge.svg)](https://github.com/toolazytoname/autodev-harness/actions/workflows/tests.yml)
+[![lint](https://github.com/toolazytoname/autodev-harness/actions/workflows/lint.yml/badge.svg)](https://github.com/toolazytoname/autodev-harness/actions/workflows/lint.yml)
+
 AI-driven development harness with **independent quality loops**. The
 model is the cheapest component — quality comes from the *structure*
 (generate → independent reviewers → gate → commit).

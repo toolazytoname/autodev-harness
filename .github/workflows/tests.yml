@@ -1,0 +1,50 @@
+name: tests
+
+# Run the full test suite on every push and PR. Pytest is the source
+# of truth; coverage gate keeps it honest. 84% on main, --cov-fail-under
+# at 80% gives us a 4-point buffer for the inevitable dip.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          # cache: pip — speeds up cold starts; pip's default cache path
+          # is keyed on python-version + requirements.
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Project itself has zero runtime deps beyond pydantic + pyyaml,
+          # so installing the [dev] extra (pytest + pytest-cov) plus the
+          # project is all we need. We deliberately do NOT install the
+          # claude / opencode / codex CLIs here — those are external
+          # and the slow tests that need them are deselected via
+          # ``-m "not slow"``.
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        # -m "not slow" excludes any test that shells out to a real CLI
+        # (we don't have those CLIs in CI). --cov-fail-under=80 sets
+        # the floor; main is currently 84%.
+        run: pytest -m "not slow" --cov=harness --cov-fail-under=80 -q

@@ -28,3 +28,40 @@ markers = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["harness"]
+
+# ---------------------------------------------------------------------------
+# Ruff (T33) — line-length 100, conservative rule set. Baseline noise
+# is expected on first rollout (see .ruff-baseline.txt); the CI lint
+# job only fails on *new* violations beyond the baseline.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    ".venv",
+    ".worktrees",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Conservative starter set: pycodestyle (E), pyflakes (F), isort (I),
+# flake8-bugbear (B), pyupgrade (UP), flake8-simplify (SIM).
+select = ["E", "F", "I", "B", "UP", "SIM"]
+# Per-file overrides can live in [tool.ruff.lint.per-file-ignores].
+ignore = [
+    "E501",  # line too long — checked separately, no value in double-checking
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests frequently use `import *` patterns from fixtures and long
+# re-exports for compatibility; relax the most annoying ones there.
+"tests/*" = ["F401", "F811"]
+# scripts/ is loose shell glue; don't lint-import-restrict it.
+"scripts/*" = ["E402"]
+
+[tool.ruff.format]
+# Match the existing 100-col gate; default quote style is "double",
+# indent-style is "space" — both match what we already write.
+quote-style = "double"
+indent-style = "space"
