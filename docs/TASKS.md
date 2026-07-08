@@ -862,7 +862,7 @@ launchd/systemd/at（避免旧逻辑在父进程跑 `time.sleep + os.system` 阻
 
 ---
 
-### T36 [MED] pipeline.py + claude.py 拆分  ⏳
+### T36 [MED] pipeline.py + claude.py 拆分  ✅ 2026-07-08
 **内容**：T24 已把 pipeline 拆出 4 个模块但 781 行仍在 800 行上限边缘；claude.py 711 行
 明确臃肿。本任务做两个文件的纯粹结构性拆分（**不做行为改动**）。
 
@@ -909,6 +909,22 @@ launchd/systemd/at（避免旧逻辑在父进程跑 `time.sleep + os.system` 阻
 - 重 export 时用 `from .prompts import _read_agent_prompt` 再 `__all__ = [...]`，对 `dir(pipeline)`
   不影响；让 patch 通过 `harness.pipeline._read_agent_prompt` 仍可达。
 - 文件移动不要忘 `pyproject.toml` 的 hatch packages = ["harness"] 已覆盖整个包。
+
+**完成记录**：纯结构拆分无行为改动 — Plan A：`harness/prompts.py`(75) 承载
+`_read_agent_prompt` / `_read_bundle_skill` / `_build_prompt` / `_build_ui_prompt` 四函数，
+`pipeline.py` re-export 保旧测试 patch 路径仍通；`harness/develop_phase.py`(170) `DevelopPhase`
+类装 `run` / `_next_runnable_task` / `_mark_task_blocked` + `_safe_linear(action_name, fn)`
+helper 折叠三处 `try/except Linear except Exception` 重复，`pipeline.py` 三方法变薄 delegate
+（`import harness.pipeline as _pipeline_mod` 而非 `from ... import run_inner_loop` — 让
+`patch("harness.pipeline.run_inner_loop")` 在调用时属性查找命中）。Plan B：
+`harness/adapters/claude_errors.py`(235) 装 `_RATE_LIMIT_RE` / `_5XX_RE` /
+`_STRUCTURED_ERROR_KEYS` / `classify_error` / `classify_quota` / `quota_error` /
+`classify_from_structured` / `extract_structured_error` 八函数，claude.py 五方法变薄 delegate
++ 模块级 re-export。`linear_report.py` 因 `_summarize_cards_for_linear` /
+`_extract_blockers_from_cards` 在 T24 已并入 `linear_sync.py`，无需新建。零测试改动（5
+patch 路径全部保留），593 passed / 2 deselected，覆盖率 84%+。`pipeline.py` 762→652
+(`-110`)，`claude.py` 633→517 (`-116`)；spec 目标 ≤250 / ≤350 是 aspirational 限，
+余下 phase_research/plan/ui/tasks/orchestrator 仍待单任务再拆。
 
 ---
 
