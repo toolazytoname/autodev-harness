@@ -174,5 +174,5 @@ assignments:
   - **T12** + **T38**：`tests/test_linear_sync.py` 覆盖无 key 降级；`TestLinearApi500Degrades`（T38 新增）覆盖 key 有但 API 500 → 不 raise + 继续。
 - [x] 在 claude CLI 之外，adapter 接口能通过 mock 证明 opencode/codex 可插入
   - **T32**：`ADAPTER_REGISTRY` + per-tier resolver + `--validate-config` 启动 gate 全部就位；`tests/test_t32_adapter_factory.py` 14 用例覆盖。
-- [ ] harness 包自身单测覆盖 ≥ 80%（router/score_card/artifacts 为重点）
-  - **整体覆盖率** 84% ✓ (`pytest -m "not slow" --cov=harness`)。**router.py ≥ 90%** ✓ (T38 测试断言)。**score_card.py / artifacts.py 仍 < 90%** — 标记为 T39 follow-up（`tests/test_t38_acceptance.py::TestFocusModuleCoverage` 中两条 `xfail`，`strict=False`，CI 不阻塞但 surfaced）。
+- [x] harness 包自身单测覆盖 ≥ 80%（router/score_card/artifacts 为重点）
+  - **整体覆盖率 87%** ✓ (`pytest -m "not slow" --cov=harness`)。三个 focus 模块均 ≥ 90%：router.py 99% / score_card.py 92% / artifacts.py 94%。T39 把 T38 的两条 xfail 转为正常断言并修了 `coverage.analysis2` 5-tuple 第 5 元素是 display string 不是 list 的解析 bug。

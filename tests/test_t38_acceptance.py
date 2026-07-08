@@ -225,26 +225,10 @@ class TestFocusModuleCoverage:
     @pytest.mark.parametrize(
         "module_name,threshold",
         [
-            # router.py has 90%+ already — passes.
+            # T39 brought all three to ≥ 90% — no more xfail needed.
             ("harness/router.py", 90),
-            # score_card.py / artifacts.py are below 90% — T38 spec
-            # says don't lower the bar, instead track a follow-up
-            # task. Mark these xfail so the gap is visible without
-            # breaking CI.
-            pytest.param(
-                "harness/score_card.py", 90,
-                marks=pytest.mark.xfail(
-                    reason="coverage < 90% — see T39 follow-up in docs/TASKS.md",
-                    strict=False,
-                ),
-            ),
-            pytest.param(
-                "harness/artifacts.py", 90,
-                marks=pytest.mark.xfail(
-                    reason="coverage < 90% — see T39 follow-up in docs/TASKS.md",
-                    strict=False,
-                ),
-            ),
+            ("harness/score_card.py", 90),
+            ("harness/artifacts.py", 90),
         ],
     )
     def test_focus_module_coverage(self, module_name, threshold, tmp_path):
@@ -278,19 +262,19 @@ class TestFocusModuleCoverage:
         for fname in [mod_file]:
             try:
                 result = cov.analysis2(fname)
-                # Newer coverage versions return 5-tuple:
-                # (filename, executable, not_executable, not_run, missing)
-                # Older versions return 4-tuple without `missing`.
+                # coverage's analysis2 returns a 4-tuple in older
+                # versions and a 5-tuple in newer ones:
+                #   4-tuple: (filename, executable, not_executable, not_run)
+                #   5-tuple: (filename, executable, not_executable, not_run, missing_string)
+                # The 5th element is the *display string* "200-201, 221, ...",
+                # NOT a list. The actual list of uncovered lines is
+                # ``not_run`` in BOTH versions.
                 if len(result) == 5:
-                    _fn, executable, not_executable, _not_run, missing_only = result
-                    # `missing_only` is the same as not_executable for
-                    # non-branch coverage; we use it as the missing count.
-                    total_statements += len(executable) + len(not_executable)
-                    missing += len(missing_only)
+                    _fn, executable, not_executable, not_run, _display = result
                 else:
-                    _fn, executable, not_executable, _not_run = result
-                    total_statements += len(executable) + len(not_executable)
-                    missing += len(not_executable)
+                    _fn, executable, not_executable, not_run = result
+                total_statements += len(executable) + len(not_executable)
+                missing += len(not_run)
             except coverage.CoverageException:
                 # The file wasn't measured — skip silently.
                 continue

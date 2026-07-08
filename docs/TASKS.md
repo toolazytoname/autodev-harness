@@ -1042,17 +1042,22 @@ score_card.py / artifacts.py 仍 <90%，`xfail(strict=False)` 不阻塞 CI 但 s
 六条 checkbox 五条 [x] + 引用 T38 测试路径，一条 [ ] + 引用 T39。`docs/TASKS.md` 新增
 T39 follow-up。605 passed + 2 deselected + 2 xfailed，覆盖率 84%+。
 
-### T39 [MED] focus-module coverage 提升（score_card / artifacts）  ⏳
+### T39 [MED] focus-module coverage 提升（score_card / artifacts）  ✅ 2026-07-09
 
 > 由 T38 surfaced 的 follow-up。两条 `xfail(strict=False)` 在
 > `tests/test_t38_acceptance.py::TestFocusModuleCoverage` 等待分数升 90%。
 > **不允许**把 90% 阈值降到 85%——T38 spec 铁律。
 
-- [ ] `harness/score_card.py` 当前 ~62% → ≥ 90%：补全 schema 校验失败 / 评分卡重构 / serialize 等分支的单测。
-- [ ] `harness/artifacts.py` 当前 ~70% → ≥ 90%：补 workflow-state 恢复、`complete_task` 边界（依赖环、已 blocked 任务再 complete 等）。
-- [ ] 把 T38 的两条 `xfail` 改成正常断言，CI 必须绿。
+- [x] `harness/score_card.py` 当前 ~62% → ≥ 90%：实测**已达 92%**（130 stmts, 11 miss）
+- [x] `harness/artifacts.py` 当前 ~70% → ≥ 90%：实测**已达 94%**（269 stmts, 17 miss）
+- [x] 把 T38 的两条 `xfail` 改成正常断言，CI 必须绿
 
----
+**完成记录**：两条 xfail 移除后**意外发现** T38 的 `analysis2` 5-tuple 解析有 bug — 第 5
+个元素是 display string (`"200-201, 221, ..."`) 而非 list of line numbers；正确的 missing line
+list 是第 4 元素 `not_run`（5-tuple / 4-tuple 都一致）。修后 T38 focus-coverage 三个模块都
+过：router.py 99% / score_card.py 92% / artifacts.py 94%。`docs/MASTER-PLAN.md` §6 最后
+一条 checkbox 改 `[x]`。607 passed / 2 deselected（slow）/ 0 xfailed（spec 铁律达成）。
+**总结**：本任务清单 0 遗留。
 
 ## 给执行模型的执行协议（EXECUTOR PROTOCOL — 开工前必读）
 
