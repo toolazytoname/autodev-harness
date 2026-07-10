@@ -22,6 +22,7 @@ from harness.adapters.base import QuotaExhaustedError
 from harness.adapters.claude import ClaudeAdapter
 from harness.artifacts import Phase, get_artifact_path
 from harness.pipeline import Pipeline, PipelineConfig, PipelineError
+from harness.preflight import run_preflight
 from harness.progress import print_failure_summary
 from harness.quota_hold import (
     MAX_AUTO_RESUME,
@@ -74,6 +75,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cancel any pending quota hold + exit (does not run the pipeline)",
     )
     parser.add_argument("--max-iterations", type=int, default=5)
+    parser.add_argument(
+        "--no-preflight", dest="no_preflight", action="store_true",
+        help="T41: skip the pre-flight brief interrogation and use "
+             "harness defaults. Useful for repeat runs in the same "
+             "project where preflight-answers.json is already filled in.",
+    )
     parser.add_argument(
         "project_dir", nargs="?", default=None,
         help="Project directory (default: cwd). Use 'config' / 'quota-status' "
@@ -219,6 +226,24 @@ def main(argv: list[str] | None = None) -> int:
         next_resume_count=next_resume_count,
     )
     pipeline = Pipeline(config, adapter=ClaudeAdapter())
+
+    # T41: grill the user with a fixed set of questions before any
+    # model call. Skippable via --no-preflight or via the
+    # preflight-answers.json file already existing on a --continue.
+    # Status / validate / cancel / config subcommands skip preflight
+    # so they remain cheap.
+    if not args.no_preflight and not args.status and not args.validate_config \
+            and not args.cancel_hold and not brief_words:
+        # ``brief_words`` empty means this is a --continue (no new
+        # brief text). In that case the preflight file is expected
+        # to already exist on disk from the original run.
+        answers_path = project_dir / "artifacts" / "preflight-answers.json"
+        if not answers_path.exists():
+            brief_for_preflight = ""
+            bp = get_artifact_path(project_dir, "000-brief")
+            if bp.exists():
+                brief_for_preflight = bp.read_text()
+            run_preflight(project_dir, brief_for_preflight)
 
     start_phase = Phase(args.phase) if args.phase else None
     # --continue and the default both resume via state detection inside run()
