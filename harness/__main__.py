@@ -22,6 +22,7 @@ from harness.adapters.base import QuotaExhaustedError
 from harness.adapters.claude import ClaudeAdapter
 from harness.artifacts import Phase, get_artifact_path
 from harness.pipeline import Pipeline, PipelineConfig, PipelineError
+from harness.progress import print_failure_summary
 from harness.quota_hold import (
     MAX_AUTO_RESUME,
     QuotaResumeExhaustedError,
@@ -225,7 +226,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pipeline.run(start_phase=start_phase)
     except PipelineError as exc:
-        print(f"Pipeline error: {exc}", file=sys.stderr)
+        # T40 — surface a clean summary block so the user knows what
+        # the harness was doing and where to look next, instead of a
+        # bare traceback. The exception is still included in the
+        # summary so the original error is preserved.
+        print_failure_summary(project_dir, exception=exc)
         return EXIT_PIPELINE_ERROR
     except BudgetExceeded as exc:
         # T29 — per-tier token cap hit. Distinct exit code (137) so

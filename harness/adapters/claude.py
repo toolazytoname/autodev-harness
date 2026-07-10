@@ -240,6 +240,18 @@ class ClaudeAdapter(AdapterBase):
             raise classified
 
         if exit_code != 0:
+            # Exit code 1 with empty stderr / stdout is the proxy-flake
+            # signature we've been hitting: the upstream provider is
+            # unreachable, claude CLI prints nothing, exits 1. Without
+            # this branch it becomes a generic AdapterError (not
+            # retried) and burns the entire pipeline. Promoting it to
+            # TransientError makes it retryable with the same back-off
+            # schedule as 5xx.
+            if exit_code == 1 and not stderr.strip() and not stdout.strip():
+                raise TransientError(
+                    f"claude exited with code 1 and no output — "
+                    f"likely upstream provider unreachable"
+                )
             raise AdapterError(
                 f"claude exited with code {exit_code}: {stderr.strip()}"
             )
@@ -266,6 +278,7 @@ class ClaudeAdapter(AdapterBase):
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         fallback_model: Optional[str] = None,
+        allowed_tools: Optional[list[str]] = None,
     ) -> AgentResult:
         """Run claude -p with image/PDF attachments and apply the same
         retry / classification machinery as the text path.
@@ -286,7 +299,7 @@ class ClaudeAdapter(AdapterBase):
         if missing:
             raise AdapterError(f"Attachments not found: {missing}")
 
-        cmd = self._build_cmd(prompt, model, cwd)
+        cmd = self._build_cmd(prompt, model, cwd, allowed_tools=allowed_tools)
         # ``--`` ends the option list so the attachment paths can't be
         # interpreted as continuation of the prompt or as flags.
         cmd.append("--")
@@ -302,6 +315,7 @@ class ClaudeAdapter(AdapterBase):
             env=env,
             primary_model=model,
             fallback_model=fallback_model,
+            allowed_tools=allowed_tools,
         )
 
     def _run_cmd_with_retry(
@@ -314,6 +328,7 @@ class ClaudeAdapter(AdapterBase):
         env: Optional[dict[str, str]],
         primary_model: str,
         fallback_model: Optional[str],
+        allowed_tools: Optional[list[str]] = None,
     ) -> AgentResult:
         """Drive ``cmd`` through the standard retry loop, with an optional
         fallback model after the primary exhausts retries or hits a
@@ -332,7 +347,7 @@ class ClaudeAdapter(AdapterBase):
         except (*RETRYABLE_EXCEPTIONS, QuotaExhaustedError):
             if not (fallback_model and fallback_model != primary_model):
                 raise
-            cmd_fb = self._swap_model_in_cmd(cmd, prompt, fallback_model, cwd)
+            cmd_fb = self._swap_model_in_cmd(cmd, prompt, fallback_model, cwd, allowed_tools=allowed_tools)
             return self._attempt(
                 cmd=cmd_fb, prompt=prompt, cwd=cwd, timeout=timeout, env=env,
                 model=fallback_model,
@@ -344,10 +359,11 @@ class ClaudeAdapter(AdapterBase):
         prompt: str,
         new_model: str,
         cwd: Path,
+        allowed_tools: Optional[list[str]] = None,
     ) -> list[str]:
         """Rebuild ``cmd`` with a different ``--model`` value, preserving
         any ``--`` separator + attachment list that followed it."""
-        fallback_cmd = self._build_cmd(prompt, new_model, cwd)
+        fallback_cmd = self._build_cmd(prompt, new_model, cwd, allowed_tools=allowed_tools)
         fallback_cmd.append("--")
         try:
             dash_idx = cmd.index("--")
@@ -403,9 +419,19 @@ class ClaudeAdapter(AdapterBase):
         prompt: str,
         model: str,
         cwd: Path,
+        *,
+        allowed_tools: Optional[list[str]] = None,
     ) -> list[str]:
-        """Build the subprocess command list."""
-        return [
+        """Build the subprocess command list.
+
+        ``allowed_tools`` (when non-empty) is forwarded as the
+        ``--allowedTools`` flag so the worker model can actually
+        *use* Write/Edit/Bash. Without it, ``claude -p`` runs in a
+        permission-prompted sandbox and every file mutation blocks
+        waiting for an interactive approval that never comes — the
+        classic "generator wrote zero files" failure mode.
+        """
+        cmd = [
             "claude",
             "-p",
             "--model",
@@ -413,6 +439,9 @@ class ClaudeAdapter(AdapterBase):
             "--output-format",
             "json",
         ]
+        if allowed_tools:
+            cmd.extend(["--allowedTools", ",".join(allowed_tools)])
+        return cmd
 
     def _execute(
         self,
@@ -424,9 +453,10 @@ class ClaudeAdapter(AdapterBase):
         attempt: int,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
+        allowed_tools: Optional[list[str]] = None,
     ) -> AgentResult:
         """Execute a single claude -p invocation (text path)."""
-        cmd = self._build_cmd(prompt, model, cwd)
+        cmd = self._build_cmd(prompt, model, cwd, allowed_tools=allowed_tools)
 
         # T19 — propagate base_url / api_key to the subprocess env so
         # worker-tier calls actually reach the configured endpoint and use

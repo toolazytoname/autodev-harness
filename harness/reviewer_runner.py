@@ -46,12 +46,12 @@ DEFAULT_VISUAL_BASE_URL: str = "http://127.0.0.1:8765"
 AUTODEV_VISUAL_BASE_URL_ENV: str = EnvVars.VISUAL_BASE_URL
 
 
-# 3-minute per-reviewer ceiling. Reviewer prompts are prompt-only
-# (no file I/O, no dev server), so a healthy reviewer finishes in
-# under a minute; 3 min gives us a generous buffer for slow networks
-# while still surfacing a real hang before the orchestrator-level
-# budget fires.
-REVIEWER_TIMEOUT_SECONDS = 180
+# 90-second per-reviewer ceiling (was 180). Reviewer prompts are
+# prompt-only (no file I/O, no dev server), so a healthy reviewer
+# finishes well under a minute; 90s gives a buffer for slow networks
+# while surfacing a real hang before the orchestrator budget fires.
+# Override: AUTODEV_REVIEWER_TIMEOUT=180 python -m harness ...
+REVIEWER_TIMEOUT_SECONDS = int(os.environ.get("AUTODEV_REVIEWER_TIMEOUT", "90"))
 
 
 def run_single_reviewer(
@@ -135,8 +135,19 @@ def _invoke_reviewer(
     reviewers' results stranded.
     """
     from harness.reviewer_runner import REVIEWER_TIMEOUT_SECONDS
+    from harness.progress import log_attempt
 
     spec = router.resolve(f"review.{reviewer_name}")
+    # T40 — log every reviewer attempt. ``total`` is fixed at 1
+    # because each reviewer runs once per iter (the loop around
+    # the reviewer batch is at the inner_loop layer, not here).
+    log_attempt(
+        phase=f"review.{reviewer_name}",
+        attempt=iter_num,
+        total=5,  # matches MAX_FEEDBACK_ITERATIONS in pipeline.py
+        target=worktree_path.name,
+        extra=f"timeout={REVIEWER_TIMEOUT_SECONDS}s",
+    )
     try:
         # T19 — propagate the resolved spec's base_url/api_key/fallback
         # so reviewer calls ride the third-party chain correctly.
@@ -149,6 +160,10 @@ def _invoke_reviewer(
             base_url=spec.base_url,
             api_key=review_api_key,
             fallback_model=spec.fallback,
+            # Reviewers read code, grep, and run linters / tests — no
+            # write/edit (they shouldn't mutate the worktree) and no
+            # shell-escalation (Bash scoped to read-only commands).
+            allowed_tools=["Read", "Glob", "Grep", "Bash"],
         )
         return result.stdout, result.usage
     except Exception as exc:

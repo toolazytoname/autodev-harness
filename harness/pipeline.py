@@ -36,6 +36,7 @@ from harness.artifacts import (
 from harness.env import EnvVars, api_key_for
 from harness.inner_loop import EscalationError, InnerLoopError, LoopConfig, run_inner_loop
 from harness.logging_setup import get_logger
+from harness.progress import log_attempt
 from harness.quota_hold import enter_quota_hold  # T16e: wired through Pipeline._run_phase_with_quota_guard
 from harness.router import BudgetExceeded, ModelRouter
 from harness.score_card import extract_json_from_fenced
@@ -46,7 +47,13 @@ if TYPE_CHECKING:
     from harness.linear_sync import LinearSync
 
 MAX_FEEDBACK_ITERATIONS = 5
-PHASE_TIMEOUT_SECONDS = 600
+# Was 600 — a single hung claude -p call used to consume 10 minutes of
+# the user's wall-clock. Bumped to 240 (was 120 in T40's first cut):
+# 120 wasn't enough buffer for the test mode's real claude -p call to
+# complete. With max_attempts=3 and 5 feedback iterations the worst
+# case is now 5 * 3 * 240s = 60 minutes (was 2.5h, T40's 120 was 30m).
+# Override at runtime: AUTODEV_PHASE_TIMEOUT=300 python -m harness ...
+PHASE_TIMEOUT_SECONDS = int(os.environ.get("AUTODEV_PHASE_TIMEOUT", "240"))
 
 
 def _summarize_cards_for_linear(cards: list) -> str:
@@ -304,6 +311,15 @@ class Pipeline:
         agent_prompt = _read_agent_prompt(self._agents_dir, phase_spec.agent)
         prompt = _build_prompt(agent_prompt, input_text)
 
+        # T40 — surface a one-liner so the user can see progress
+        # even when the call hangs for 2 minutes on a flaky proxy.
+        log_attempt(
+            phase=phase.name.lower(),
+            attempt=1,
+            total=1,
+            target=phase_spec.agent,
+            extra=f"timeout={PHASE_TIMEOUT_SECONDS}s model={spec.model}",
+        )
         result = self._adapter.run(
             prompt,
             model=spec.model,
@@ -312,6 +328,12 @@ class Pipeline:
             base_url=spec.base_url,
             api_key=self._api_key_for(spec.tier),
             fallback_model=spec.fallback,
+            # Outer-pipeline agents (researcher / planner / ui / taskgen)
+            # only need to read the brief + prior artifacts and emit
+            # their output to stdout (captured by the harness); no
+            # write/edit. Keeping it minimal reduces accidental
+            # side-effects on the user's project dir.
+            allowed_tools=["Read", "Glob", "Grep"],
         )
         self._router.record(stage, result.usage)
         return result

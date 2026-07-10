@@ -289,6 +289,11 @@ class UIPhase:
             base_url=spec.base_url,
             api_key=self._p._api_key_for(spec.tier),
             fallback_model=spec.fallback,
+            # UI spec generation writes a markdown spec to stdout and
+            # the harness captures it. We allow Write too so the agent
+            # can save preview HTML directly into preview/versions/
+            # without going through permission prompts.
+            allowed_tools=["Read", "Write", "Glob", "Grep"],
         )
         self._p._router.record(stage, result.usage)
         return result

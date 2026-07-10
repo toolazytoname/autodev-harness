@@ -12,10 +12,10 @@
 #   AUTODEV_FALLBACK_<TIER> = e.g. "haiku-4-5"
 
 tiers:
-  # architect: Fable/Opus — plan, gate撞顶仲裁, 最终验收
+  # architect: Opus — plan, gate撞顶仲裁, 最终验收
   architect:
     model: claude-opus-4-8
-    fallback: claude-sonnet-4-6
+    fallback: claude-sonnet-5
     # T29: absolute per-tier token cap. warn_at/stop_at percent below
     # are computed against this number. Tune via AUTODEV_BUDGET_ARCHITECT
     # env var if a single project needs a different cap.
@@ -23,14 +23,15 @@ tiers:
 
   # reviewer: Sonnet档 — 评审需要判断力但不需要顶级架构能力
   reviewer:
-    model: claude-sonnet-4-6
+    model: claude-sonnet-5
     fallback: claude-haiku-4-5-20251001
     max_tokens: 5000000
 
-  # worker: MiniMax/Haiku/GLM 等便宜档 — generate/修复/文档/research摘要
+  # worker: 便宜档 — generate/修复/文档/research摘要。
+  # 本机仅 Claude 订阅鉴权，worker 用 Haiku（无 base_url，走默认端点）。
+  # 若接 MiniMax/GLM 等第三方，改回 model + base_url + AUTODEV_API_KEY_WORKER。
   worker:
-    model: MiniMax-M2.7
-    base_url: https://api.minimaxi.com/anthropic
+    model: claude-haiku-4-5-20251001
     fallback: claude-haiku-4-5-20251001
     max_tokens: 10000000
 

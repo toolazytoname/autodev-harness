@@ -112,6 +112,7 @@ python -m harness status       # print the current workflow state
 - `docs/TASKS.md` — the task list
 - `docs/ADAPTER.md` — adding a new model adapter
 - `docs/CROSS-PLATFORM-TESTING.md` — web / mobile / miniprogram
+- `docs/COMPETITIVE-ANALYSIS.md` — 竞品对照与差距分析
 
 ## Tests
 

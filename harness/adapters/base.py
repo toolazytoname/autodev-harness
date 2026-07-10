@@ -171,19 +171,24 @@ class InvalidResponseError(AdapterError):
 
 
 # Exceptions that ``AdapterBase.run()`` retries with exponential back-off.
-# TimeoutError is intentionally excluded — timeouts are not transient.
-# QuotaExhaustedError is intentionally excluded — retrying a quota
-# signal just wastes the budget; T16c/T16d downgrade or suspend instead.
+# TimeoutError was previously excluded ("not transient") but in practice
+# the most common cause is the upstream provider hanging (proxy flake,
+# API overload), which IS transient — and the harness currently has no
+# other safety net for this case. Including it here costs ~30s of
+# back-off sleep per failure but lets a brief provider outage heal
+# without aborting the whole pipeline run. A separate, longer
+# ``RETRY_TIMEOUT_BASE_DELAY`` (below) keeps the first retry quiet
+# enough that we don't hammer a still-dead endpoint.
 RETRYABLE_EXCEPTIONS: tuple[type[AdapterError], ...] = (
     RateLimitError,
     ServerError,
     TransientError,
+    TimeoutError,
 )
 
 # Known non-retryable errors that should propagate as-is, without being
 # wrapped in a generic "Unexpected adapter error" AdapterError.
 NON_RETRYABLE_EXCEPTIONS: tuple[type[AdapterError], ...] = (
-    TimeoutError,
     QuotaExhaustedError,
     InvalidResponseError,
 )
@@ -205,6 +210,11 @@ class AdapterBase(ABC):
     # Exponential back-off configuration
     RETRY_BASE_DELAY: float = 1.0  # seconds
     RETRY_MAX_DELAY: float = 32.0
+    # TimeoutError retry uses a longer base (10s vs 1s): when the
+    # subprocess times out, the upstream is almost certainly still
+    # unhealthy; hammering it at 1s intervals just wastes the budget.
+    # 10s → 20s gives the provider ~30s to recover before we give up.
+    RETRY_TIMEOUT_BASE_DELAY: float = 10.0
     RETRY_MAX_ATTEMPTS: int = 3
     RETRY_RATELIMIT_CODES: set[int] = {429}
     RETRY_SERVER_ERROR_CODES: set[int] = {500, 502, 503, 504}
@@ -219,6 +229,7 @@ class AdapterBase(ABC):
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         fallback_model: Optional[str] = None,
+        allowed_tools: Optional[list[str]] = None,
     ) -> AgentResult:
         """Run the agent with the given prompt.
 
@@ -274,6 +285,7 @@ class AdapterBase(ABC):
                 timeout=timeout,
                 base_url=base_url,
                 api_key=api_key,
+                allowed_tools=allowed_tools,
             )
         except RETRYABLE_EXCEPTIONS as primary_exc:
             # Primary exhausted all retries. If a fallback model is wired
@@ -287,6 +299,7 @@ class AdapterBase(ABC):
                     timeout=timeout,
                     base_url=base_url,
                     api_key=api_key,
+                    allowed_tools=allowed_tools,
                 )
             raise
         except QuotaExhaustedError as primary_exc:
@@ -302,6 +315,7 @@ class AdapterBase(ABC):
                     timeout=timeout,
                     base_url=base_url,
                     api_key=api_key,
+                    allowed_tools=allowed_tools,
                 )
             raise
 
@@ -314,6 +328,7 @@ class AdapterBase(ABC):
         timeout: int,
         base_url: Optional[str],
         api_key: Optional[str],
+        allowed_tools: Optional[list[str]],
     ) -> AgentResult:
         """Internal: run a single ``model`` with the standard retry loop.
 
@@ -342,6 +357,7 @@ class AdapterBase(ABC):
                     attempt=attempt,
                     base_url=base_url,
                     api_key=api_key,
+                    allowed_tools=allowed_tools,
                 )
                 # Success — return immediately
                 return result
@@ -358,7 +374,18 @@ class AdapterBase(ABC):
                 # hint, so retry_after_seconds is None and the schedule
                 # wins.
                 retry_after = getattr(exc, "retry_after_seconds", None)
-                delay = self._backoff_delay(attempt, retry_after_seconds=retry_after)
+                # TimeoutError gets its own longer base — upstream is
+                # usually still unhealthy; the 10s base gives it room.
+                base_delay = (
+                    self.RETRY_TIMEOUT_BASE_DELAY
+                    if isinstance(exc, TimeoutError)
+                    else None
+                )
+                delay = self._backoff_delay(
+                    attempt,
+                    retry_after_seconds=retry_after,
+                    base_delay=base_delay,
+                )
                 attempt += 1
                 if attempt >= self.RETRY_MAX_ATTEMPTS:
                     break

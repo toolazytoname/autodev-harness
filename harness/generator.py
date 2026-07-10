@@ -19,13 +19,17 @@ from typing import Optional
 
 from harness.adapters.base import AdapterBase, AgentResult
 from harness.env import EnvVars, api_key_for
+from harness.progress import log_attempt
 from harness.router import ModelRouter
 
 
-# Generator uses a 5-minute ceiling — long enough for a real model to
+# Generator uses a 4-minute ceiling — long enough for a real model to
 # write a small feature, short enough that a hung process is detected
-# before the orchestrator times out the whole task.
-GENERATOR_TIMEOUT_SECONDS = 300
+# before the orchestrator times out the whole task. Was 300s, then
+# 120s in T40; 120 hit the test-mode "todo app" regression. 240s
+# matches PHASE_TIMEOUT_SECONDS so worst-case wall-clock is
+# predictable. Override: AUTODEV_GENERATOR_TIMEOUT=300 python -m ...
+GENERATOR_TIMEOUT_SECONDS = int(os.environ.get("AUTODEV_GENERATOR_TIMEOUT", "240"))
 
 
 # Generator prompt template. Kept at module level (vs inlined in
@@ -96,10 +100,27 @@ def run_generator(
         task_description=task_description or "(no description)",
         spec=spec_text, feedback_block=feedback_block,
     )
+    # T40 — log every generator attempt so a hung subprocess is
+    # visibly distinct from a silent crash. ``iter_num`` is the
+    # current loop iteration; ``total`` is unbounded (capped by
+    # MAX_FEEDBACK_ITERATIONS at the caller) so we report the
+    # known cap instead of "?"
+    log_attempt(
+        phase="develop",
+        attempt=iter_num,
+        total=5,  # matches MAX_FEEDBACK_ITERATIONS in pipeline.py
+        target=task_id,
+        extra=f"timeout={GENERATOR_TIMEOUT_SECONDS}s",
+    )
     result = adapter.run(
         prompt, model=spec.model, cwd=worktree_path,
         timeout=GENERATOR_TIMEOUT_SECONDS,
         base_url=spec.base_url, api_key=api_key, fallback_model=spec.fallback,
+        # Generator actually needs Write/Edit/Bash to materialize the
+        # code in the worktree; without these flags, claude -p blocks
+        # on a permission prompt that never resolves and the worktree
+        # ends up empty — every reviewer then scores 0 for "no source".
+        allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
     )
     return GeneratorOutput(
         stdout=result.stdout, stderr=result.stderr,
