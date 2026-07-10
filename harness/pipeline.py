@@ -189,6 +189,12 @@ class PipelineConfig:
     # T16e: populated by `begin_resume()` in __main__ before pipeline.run()
     # so a re-entrant quota-hold can carry the incremented resume_count.
     next_resume_count: int = 0
+    # T42: when True, the UI design phase is skipped entirely (no
+    # preview HTML, no 4-direction picker). The develop phase reads
+    # the user's preflight visual choice and applies that skill
+    # directly. Set via --skip-ui-review or auto-detected from brief
+    # keywords (POC / 原型 / taste 把关 / etc.).
+    skip_ui_review: bool = False
     # Injected for testability; defaults are created lazily in Pipeline
     log: Callable[[str], None] = print
 
@@ -348,6 +354,25 @@ class Pipeline:
             pass_threshold=self._config.pass_threshold,
         )
         write_workflow_state(self._config.project_dir, state)
+
+    def _write_skipped_ui_spec(self) -> None:
+        """Write a stub ``006-ui-spec.md`` when UI phase is skipped.
+
+        The develop phase and visual reviewer both key off this file's
+        existence. An empty file is a clear "intentionally skipped"
+        signal (vs. a missing file which means "pipeline not done").
+        Content: a single-line directive so the generator knows to
+        pull the visual style from ``preflight-answers.json`` instead.
+        """
+        path = get_artifact_path(self._config.project_dir, "006-ui-spec")
+        if path.exists():
+            return  # resume case: spec already there from earlier run
+        path.write_text(
+            "# UI Design Spec\n\n"
+            "_Skipped per user preference (--skip-ui-review). "
+            "Visual direction comes from artifacts/preflight-answers.json._\n"
+        )
+        self._log(f"Stub UI spec written: {path}")
 
     # ------------------------------------------------------------------
     # Human feedback helpers
@@ -555,8 +580,19 @@ class Pipeline:
         if start_phase is None:
             start_phase = self._detect_start_phase()
 
-        start_idx = PIPELINE_PHASES.index(start_phase)
-        completed: list[Phase] = list(PIPELINE_PHASES[:start_idx])
+        # T42: build the per-run phase list. The default is
+        # ``PIPELINE_PHASES`` (5 phases); when ``skip_ui_review`` is
+        # set, ``Phase.UI`` is dropped and a stub ``006-ui-spec.md``
+        # is written so the develop phase can detect "intentionally
+        # skipped" instead of "missing".
+        phases = list(PIPELINE_PHASES)
+        if self._config.skip_ui_review and Phase.UI in phases:
+            phases.remove(Phase.UI)
+            self._write_skipped_ui_spec()
+            self._log("UI design phase skipped (--skip-ui-review)")
+
+        start_idx = phases.index(start_phase)
+        completed: list[Phase] = list(phases[:start_idx])
 
         runners: dict[Phase, Callable[[], object]] = {
             Phase.RESEARCH: self.phase_research,
@@ -566,7 +602,7 @@ class Pipeline:
             Phase.DEVELOP: self.phase_develop,
         }
 
-        for phase in PIPELINE_PHASES[start_idx:]:
+        for phase in phases[start_idx:]:
             self._save_state(phase, completed)
             mode_str = (
                 self._config.mode.value

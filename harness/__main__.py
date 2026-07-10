@@ -76,6 +76,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-iterations", type=int, default=5)
     parser.add_argument(
+        "--skip-ui-review", dest="skip_ui_review", action="store_true",
+        help="T42: skip the UI design phase entirely. No 4-direction "
+             "preview HTML, no human picker. Develop phase will pull the "
+             "visual direction from artifacts/preflight-answers.json. "
+             "Also auto-enabled when the brief contains keywords like "
+             "'POC', '原型', 'UI 不 review', or 'taste 把关'.",
+    )
+    parser.add_argument(
         "--no-preflight", dest="no_preflight", action="store_true",
         help="T41: skip the pre-flight brief interrogation and use "
              "harness defaults. Useful for repeat runs in the same "
@@ -219,11 +227,32 @@ def main(argv: list[str] | None = None) -> int:
         brief_path.write_text(f"# 项目需求\n\n{' '.join(brief_words)}\n")
         print(f"Brief created: {brief_path}")
 
+    # T42: --skip-ui-review can be set explicitly via flag, OR
+    # auto-detected from brief keywords. The auto path matters
+    # because the user's exact words ("UI 我不 review 了") are a
+    # strong signal that the 4-direction picker would be wasted.
+    skip_ui = args.skip_ui_review
+    if not skip_ui and brief_words:
+        # brief_words only set when this is a new run (not --continue)
+        joined_brief = " ".join(brief_words)
+        skip_keywords = [
+            "POC", "poc", "原型", "prototype", "MVP", "mvp",
+            "UI 不 review", "UI 不 review", "taste 把关", "taste 来把关",
+            "内部用", "自己用", "自己能跑",
+        ]
+        if any(k in joined_brief for k in skip_keywords):
+            skip_ui = True
+            print(
+                f"⏭  --skip-ui-review auto-enabled (brief matched: "
+                f"{[k for k in skip_keywords if k in joined_brief][0]})"
+            )
+
     config = PipelineConfig(
         project_dir=project_dir,
         mode=mode,
         max_iterations=max_iterations,
         next_resume_count=next_resume_count,
+        skip_ui_review=skip_ui,
     )
     pipeline = Pipeline(config, adapter=ClaudeAdapter())
 
