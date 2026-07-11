@@ -114,6 +114,87 @@ OpenHands / Aider / Plandex 都有庞大社区、真实用户、被踩过的坑�
 
 ---
 
+## 6. 姐妹项目：wechat-mp-devops skill（已并入 yuyue-miniapp）
+
+> 写于 2026-07-11。同一作者（lazy）维护的兄弟项目，定位是「把微信小
+> 程序 CI/CD 的全套踩坑沉淀成可复用的 Claude Code skill」。本节只
+> 是 reference——具体策略读 yuyue-miniapp 项目里的 `.claude/skills/
+> wechat-mp-devops/SKILL.md`。
+
+### 这个 skill 是什么
+
+- 形态：纯文档型 Claude Code skill（**无 hooks、无 auto-execute**），
+  7 个 `references/*.md`（secrets / miniprogram-ci API / QR API / 4 类踩
+  坑）+ 2 个 `examples/`（GitHub Actions `mp-ci.yml` + macOS 一键
+  `local-mac-dev.sh`）。
+- 入口：`wechat-mp-devops` skill。
+- 触发关键词：`miniprogram-ci` / `mp-ci` / `WX_PRIVATE_KEY` /
+  `WX_APP_SECRET` / `getwxacodeunlimit` / `access_token missing` /
+  `小程序尚未发布`。
+- License：MIT（同本项目，方便互引）。
+
+### 哪里现在装着一份
+
+```
+yuyue-miniapp/.claude/skills/wechat-mp-devops/
+├── SKILL.md
+├── references/{secrets, miniprogram-ci, qr-page,
+│              wechat-qr-api, cicd-pitfalls, debug-tips,
+│              macos-setup}.md
+└── examples/{mp-ci.yml, local-mac-dev.sh}
+```
+
+**安装方式**：直接 copy 内容进 `.claude/skills/`（**不**用 git submodule
+——纯 markdown 文档，跟某个 commit hash 绑死没意义）。这次安装的 commit：
+
+- repo HEAD：`d685c5c feat: add macOS local dev support`
+- yuyue commit：`8b59098 chore: install wechat-mp-devops skill, drop Dashboard.tsx.bak`
+
+### 与本项目（harness）的边界
+
+| 维度 | harness | wechat-mp-devops |
+|---|---|---|
+| 关注层 | 多阶段 spec→plan→UI→tasks→code 的 outer 流水线 | 单一「build+upload+preview」垂直环节 |
+| 与模型关系 | 驱动模型 + 多 reviewer gate | 不跑模型；只喂手工命令给 `miniprogram-ci` |
+| 集成方式 | `python -m harness` CLI | Claude Code skill，prompt 触发 |
+| 主要使用者 | harness 自己跑通整个项目 | yuyue-miniapp 这种微信小程序产物交给人工扫码 |
+
+**没有冲突**——harness 的 **DEVELOP** 阶段产物最终落地一个微信小程序时，
+wechat-mp-devops skill 是「产完代码之后怎么 upload + preview + QR」的**后半
+截**。二者串起来：
+
+```
+harness DEVELOP 阶段  →  产出 apps/mp/dist/
+       ↓
+wechat-mp-devops (miniprogram-ci preview)
+       ↓
+QR + Preview.app
+       ↓
+人工扫码验收
+```
+
+### 借鉴清单（下次 harness 升级可参考）
+
+1. **macOS 本地一键 preview**（`examples/local-mac-dev.sh`）——harness
+   现在跑完 DEVELOP 阶段后没有任何「看一眼」的环节；用户其实需要的是
+   “build 完直接 open Preview.app”而不是再去人工 cmd+t。
+2. **QR-to-HTML 到 Pages**（`references/qr-page.md`）——跨设备扫码入口
+   的成熟范式；harness 的 UI 阶段曾考虑加一张 “open in browser” 预览
+   但没落地，这里有现成做法。
+3. **secrets 区分**（`references/secrets.md`）——PEM vs hex AppSecret 是
+   一个反复绕的坑，本项目 plan 阶段如果将来要触碰「直接对接微信接口」
+   （例如校验用户资格），应直接引这条 reference，不要重新发明轮子。
+4. **踩坑日志**（`references/cicd-pitfalls.md`）——这个文件本身就是
+   「快速失败 + 显眼错误」的工程样板，对 harness 的 preflight 阶段
+   有正向启发。
+
+> 升级策略：wechat-mp-devops 上游更新时，手动跑
+> `curl -sSL .../main.tar.gz | tar -xz -C /tmp/wmd-extract` 再重新 cp 进
+> yuyue 的 `.claude/skills/`；并把这次的内容变更同步进本文件第 6 节
+> 「上次同步 commit」一栏。
+
+---
+
 ## 6. 来源（Sources）
 
 - OpenHands (All-Hands-AI)：<https://github.com/All-Hands-AI/OpenHands>
@@ -121,5 +202,7 @@ OpenHands / Aider / Plandex 都有庞大社区、真实用户、被踩过的坑�
 - OpenHands SWE-bench 评测：<https://github.com/All-Hands-AI/OpenHands-SWE-Bench-Evaluation>
 - Plandex：<https://github.com/plandex-ai/plandex>
 - Devin / Cognition：<https://www.cognition.ai/devin>
+- **wechat-mp-devops**（同一作者姐妹项目，已并入 yuyue-miniapp）：
+  <https://github.com/toolazytoname/wechat-mp-devops>
 - （Agentless / SWE-agent / MetaGPT / gpt-pilot / Aider 见各自 GitHub / arXiv；本表
   基于截至 2026-01 的公开信息 + 2026-07 复核，具体分数以官方最新榜单为准。）
