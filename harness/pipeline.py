@@ -224,9 +224,17 @@ class Pipeline:
         skills_bundle_dir: Optional[Path] = None,
         linear_sync: Optional["LinearSync"] = None,
         adapter_resolver: Optional[Callable[[str], "AdapterBase"]] = None,
+        ui_adapter: Optional[AdapterBase] = None,
     ) -> None:
         self._config = config
         self._adapter = adapter
+        # T45 — UI-only adapter override. ``UIPhase._call_ui_direction``
+        # routes through ``self._ui_adapter`` (not ``self._adapter``) so
+        # ``__main__`` can install an ``OpenDesignAdapter`` here when
+        # Open Design is detected on the host. Defaults to ``adapter``,
+        # which preserves the historical single-adapter behavior on
+        # hosts where OD is not installed.
+        self._ui_adapter = ui_adapter if ui_adapter is not None else adapter
         self._router = router or ModelRouter()
         # T32: per-tier adapter resolution. When set, the pipeline asks
         # the resolver for the right backend given a tier's adapter

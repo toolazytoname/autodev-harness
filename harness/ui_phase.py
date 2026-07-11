@@ -21,9 +21,21 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from harness.artifacts import write_artifact
+from harness.adapters.base import AdapterError
 from harness.env import EnvVars
+from harness.open_design import (
+    Direction,
+    parse_direction_list,
+)
 from harness.pipeline_base import PipelineError, _is_interactive
+# Imported at module scope (instead of inside _generate_topic_directions)
+# so tests can ``patch.object(ui_phase, "_build_direction_gen_prompt", ...)``
+# to short-circuit the LLM call and assert on the parser wiring.
+from harness.prompts import _build_direction_gen_prompt  # noqa: E402,F401
+from harness.pipeline import UI_DIRECTIONS  # noqa: E402,F401  (T45 fallback list)
 
 
 # Brief-keyword → direction-slug picker. First match wins; if no
@@ -168,22 +180,84 @@ class UIPhase:
     # ------------------------------------------------------------------
 
     def run(self, plan_text: str) -> Path:
-        """Run the full UI phase: render 4 → human pick loop → finalize."""
-        self._log("━━━ Phase: ui_design (4 aesthetic directions) ━━━")
+        """Run the full UI phase: derive topic-aware directions → render all
+        in parallel → human pick loop → finalize."""
+        self._log("━━━ Phase: ui_design (topic-aware directions) ━━━")
         if plan_text is None:
             raise PipelineError("002-plan.md not found — run plan first")
 
         versions_dir = self._project_dir / "preview" / "versions"
         versions_dir.mkdir(parents=True, exist_ok=True)
 
-        ordered = pick_directions_for_brief(plan_text)
-        self._log(f"Directions (recommended first): {[d['slug'] for d in ordered]}")
+        # T45 — topic-aware direction set: an LLM proposes N directions
+        # tailored to this brief (concrete screens / views of the
+        # product). Falls back to the canonical ``UI_DIRECTIONS`` list
+        # when the LLM call or its parser fails — see
+        # ``_generate_topic_directions`` for the failure modes.
+        n = self._resolve_direction_count()
+        ordered = self._generate_topic_directions(plan_text, n=n)
+        self._log(
+            f"Directions ({len(ordered)}, recommended first): "
+            f"{[d['slug'] if isinstance(d, dict) else d.slug for d in ordered]}"
+        )
 
         versions = self._render_all_directions(
             ordered, plan_text, previous_spec="", user_feedback=""
         )
         self._run_slop_check(versions)
         return self._human_pick_loop(ordered, plan_text, versions, versions_dir)
+
+    # ------------------------------------------------------------------
+    # Direction generation
+    # ------------------------------------------------------------------
+
+    def _resolve_direction_count(self) -> int:
+        """Resolve the N for topic-aware generation.
+
+        Honors ``AUTODEV_UI_DIRECTION_COUNT`` (env override); defaults
+        to 3 (the plan-time default — T45 chose 3 over the historical
+        4 because the new directions are more specific and 3 is enough
+        for a meaningful comparison)."""
+        try:
+            raw = os.environ.get(EnvVars.UI_DIRECTION_COUNT, "").strip()
+            return int(raw) if raw else 3
+        except ValueError:
+            return 3
+
+    def _generate_topic_directions(
+        self, plan_text: str, n: int
+    ) -> list[dict[str, str]]:
+        """LLM-driven topic-aware direction list. Falls back to the
+        hardcoded ``UI_DIRECTIONS`` on any failure.
+
+        Returns the same ``dict`` shape the legacy 4-direction path
+        used so the rest of the UI phase (render, prompt-build,
+        slop-check, finalize) keeps working unchanged. ``Direction``
+        rows from the new parser carry extra ``intent``/``sections``
+        keys which ``_build_ui_prompt`` slots into the model prompt.
+        """
+        try:
+            prompt = _build_direction_gen_prompt(plan_text, n=n)
+            result = self._p._adapter.run(
+                prompt,
+                # The direction-gen step uses whatever the pipeline's
+                # main adapter resolves to — typically a small worker
+                # model (cheap, fast).
+                model="haiku-4-5",
+                cwd=self._project_dir,
+                timeout=120,
+            )
+            directions = parse_direction_list(result.stdout)
+            return [d.to_dict() for d in directions]
+        except Exception as exc:
+            # Any failure mode (LLM error, parse error, empty output)
+            # falls back to the canonical list. Keeps a stale or
+            # misconfigured model from breaking the UI phase.
+            self._log(
+                f"  topic dirs: LLM failed ({exc!r}); falling back to "
+                f"hardcoded {len(UI_DIRECTIONS)} directions"
+            )
+            return list(UI_DIRECTIONS)
 
     def _human_pick_loop(
         self,
@@ -281,7 +355,7 @@ class UIPhase:
             style_module_text=style_module,
         )
 
-        result = self._p._adapter.run(
+        result = self._p._ui_adapter.run(
             prompt,
             model=spec.model,
             cwd=self._project_dir,
@@ -337,9 +411,33 @@ class UIPhase:
         previous_spec: str,
         user_feedback: str,
     ) -> list[tuple[dict[str, str], str, str]]:
-        """Render every aesthetic direction in ``directions`` and persist them."""
-        rendered: list[tuple[dict[str, str], str, str]] = []
+        """Render every direction in parallel; on per-direction failure,
+        fall back to ``self._p._adapter`` (the main stage adapter).
+
+        T45 — the topic-aware direction list is rendered with the
+        ``_ui_adapter`` (Open Design when available; Claude otherwise)
+        and any single failure (daemon unreachable / run failed-canceled
+        / poll budget exhausted) is recovered by retrying the same
+        direction with the main adapter, so the UI phase never silently
+        drops a direction.
+
+        Order of results mirrors the input direction list — the human
+        pick loop indexes by position.
+        """
+        # Pre-create version directories so on disk they show up even
+        # before the parallel calls complete.
         for direction in directions:
+            dir_path = self._project_dir / "preview" / "versions" / direction["slug"]
+            dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Map future → (direction, attempt_path) so we can place each
+        # result back into the same position as its source direction.
+        results_by_index: dict[int, tuple[dict[str, str], str, str]] = {}
+
+        def _render(index: int, direction: dict[str, str]) -> tuple[dict[str, str], str, str]:
+            """Try ``_ui_adapter`` first; on AdapterError, fall back to
+            the main adapter. Any other failure (PipelineError, OS
+            error) propagates so the caller can surface it."""
             self._log(f"  rendering direction: {direction['slug']}")
             try:
                 result = self._p._call_ui_direction(
@@ -349,16 +447,106 @@ class UIPhase:
                     user_feedback=user_feedback,
                 )
                 spec_md, html = extract_ui_output(result.stdout)
-            except PipelineError as exc:
+            except AdapterError as exc:
+                # OD specifically failed for this direction — fall back
+                # to the main adapter with the same prompt.
+                self._log(
+                    f"    direction {direction['slug']} failed on _ui_adapter "
+                    f"({exc!r}); retrying via _adapter"
+                )
+                try:
+                    # Rebuild the same prompt out of band. We can't
+                    # reach into _call_ui_direction's internals here, so
+                    # just call _adapter.run with a minimal "design
+                    # this direction" prompt — the same one _call_ui_direction
+                    # would build. Keeping the fallback lightweight
+                    # means a single OD hiccup doesn't double the run
+                    # time per direction.
+                    from harness.pipeline import (
+                        PHASE_SPECS,
+                        PHASE_TIMEOUT_SECONDS,
+                        _build_ui_prompt,
+                    )
+                    from harness.artifacts import Phase
+
+                    ui_spec = PHASE_SPECS[Phase.UI]
+                    stage = ui_spec.stage
+                    spec = self._p._router.resolve(stage)
+                    three_piece = self._p._load_three_piece_baseline()
+                    style_module = self._p._load_style_module(direction["module"])
+                    agent_prompt = self._read_ui_agent_prompt(ui_spec.agent)
+                    prompt = _build_ui_prompt(
+                        base_prompt=agent_prompt,
+                        plan_text=plan_text,
+                        direction=direction,
+                        three_piece_text=three_piece,
+                        style_module_text=style_module,
+                    )
+                    result = self._p._adapter.run(
+                        prompt,
+                        model=spec.model,
+                        cwd=self._project_dir,
+                        timeout=PHASE_TIMEOUT_SECONDS,
+                        base_url=spec.base_url,
+                        api_key=self._p._api_key_for(spec.tier),
+                        fallback_model=spec.fallback,
+                        allowed_tools=["Read", "Write", "Glob", "Grep"],
+                    )
+                    spec_md, html = extract_ui_output(result.stdout)
+                except Exception as inner_exc:
+                    self._log(
+                        f"    direction {direction['slug']} fallback also failed: {inner_exc!r}"
+                    )
+                    spec_md, html = "", ""
+            except Exception as exc:
+                # ``PipelineError`` from the harness, OS errors, etc.
                 self._log(f"    direction {direction['slug']} failed: {exc}")
                 spec_md, html = "", ""
+            return direction, spec_md, html
 
-            dir_path = self._project_dir / "preview" / "versions" / direction["slug"]
-            dir_path.mkdir(parents=True, exist_ok=True)
-            (dir_path / "index.html").write_text(html or "<!DOCTYPE html><!-- empty -->\n")
+        # Render all directions concurrently. ``ThreadPoolExecutor``
+        # is the harness's standard fan-out pattern (see
+        # ``harness.reviewer_runner`` for the canonical template).
+        max_workers = max(1, len(directions))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_to_index = {
+                pool.submit(_render, i, d): i
+                for i, d in enumerate(directions)
+            }
+            for future in as_completed(future_to_index):
+                idx = future_to_index[future]
+                try:
+                    results_by_index[idx] = future.result()
+                except Exception as exc:
+                    direction = directions[idx]
+                    self._log(
+                        f"    direction {direction['slug']} crashed: {exc!r}"
+                    )
+                    results_by_index[idx] = (direction, "", "")
+
+        # Persist + return in original order.
+        rendered: list[tuple[dict[str, str], str, str]] = []
+        for idx, direction in enumerate(directions):
+            d, spec_md, html = results_by_index.get(
+                idx, (direction, "", "")
+            )
+            dir_path = self._project_dir / "preview" / "versions" / d["slug"]
+            (dir_path / "index.html").write_text(
+                html or "<!DOCTYPE html><!-- empty -->\n"
+            )
             (dir_path / "spec.md").write_text(spec_md or "")
-            rendered.append((direction, spec_md, html))
+            rendered.append((d, spec_md, html))
         return rendered
+
+    def _read_ui_agent_prompt(self, agent_name: str) -> str:
+        """Read agents/<name>.md via the pipeline's ``_agents_dir``.
+
+        Mirrors what ``Pipeline._load_three_piece_baseline`` does for
+        style module text so the fallback path stays consistent.
+        """
+        from harness.prompts import _read_agent_prompt
+
+        return _read_agent_prompt(self._p._agents_dir, agent_name)
 
     def _refine_version(
         self,

@@ -13,6 +13,7 @@ Argument semantics mirror the legacy bash entry (autodev-harness.sh):
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -143,6 +144,66 @@ def _print_quota_status(project_dir: Path) -> int:
     return EXIT_OK
 
 
+def _resolve_ui_adapter():
+    """Resolve the UI-only adapter, installed on ``Pipeline`` as
+    ``ui_adapter`` when Open Design is available.
+
+    Resolution rule (AUTODEV_UI_OD env override):
+      - ``AUTODEV_UI_OD="0"``  → always ``None`` (force UI phase onto Claude).
+      - ``AUTODEV_UI_OD="1"``  → try to construct the OD adapter; on
+        any failure, fall back to ``None`` and log a warning.
+      - unset / empty         → auto-detect via
+        ``harness.open_design.is_available()``.
+
+    Returns ``None`` when the UI phase should keep using the main
+    (Claude) adapter — the canonical hook for hosts without OD.
+    """
+    from harness.adapters.open_design import OpenDesignAdapter
+    from harness.env import EnvVars
+    from harness.open_design import is_available as _od_is_available
+
+    override = os.environ.get(EnvVars.UI_OD, "").strip()
+
+    if override == "0":
+        print("Open Design: skipped (AUTODEV_UI_OD=0)")
+        return None
+    if override not in ("", "1"):
+        # Any other value is invalid; ignore and auto-detect.
+        print(f"Open Design: invalid AUTODEV_UI_OD={override!r}; ignoring")
+
+    if override == "1" or override == "":
+        try:
+            if override == "":
+                # auto-detect path
+                available = _od_is_available()
+            else:
+                available = True
+            if not available:
+                print(
+                    "Open Design: probe failed — falling back to Claude for UI phase"
+                )
+                return None
+            adapter = OpenDesignAdapter()
+            print("Open Design: enabled (UI designs will go to OD projects)")
+            return adapter
+        except Exception as exc:
+            # Any failure during probe or construction → fall back.
+            print(
+                f"Open Design: probe/construct failed ({exc!r}); "
+                "falling back to Claude for UI phase"
+            )
+            return None
+    return None
+    from harness.quota_hold import format_hold_status, read_hold
+
+    hold = read_hold(project_dir)
+    if hold is None:
+        print(f"No quota hold present in {project_dir}")
+        return EXIT_PIPELINE_ERROR
+    print(format_hold_status(hold))
+    return EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
 
@@ -254,7 +315,13 @@ def main(argv: list[str] | None = None) -> int:
         next_resume_count=next_resume_count,
         skip_ui_review=skip_ui,
     )
-    pipeline = Pipeline(config, adapter=ClaudeAdapter())
+
+    # T45 — Open Design probe. If OD is detected (or forced via
+    # AUTODEV_UI_OD=1), install an ``OpenDesignAdapter`` as the UI-only
+    # adapter so the UI design phase can be visualized in the OD app.
+    # Hosts without OD fall back silently to Claude.
+    ui_adapter = _resolve_ui_adapter()
+    pipeline = Pipeline(config, adapter=ClaudeAdapter(), ui_adapter=ui_adapter)
 
     # T41: grill the user with a fixed set of questions before any
     # model call. Skippable via --no-preflight or via the

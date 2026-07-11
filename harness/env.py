@@ -43,6 +43,16 @@ class EnvVars:
     UI_FEEDBACK: str = "AUTODEV_UI_FEEDBACK"
     UI_DIRECTION: str = "AUTODEV_UI_DIRECTION"
 
+    # T45 — Open Design integration. Forces on/off when set to "1"/"0";
+    # unset or empty = auto-detect via is_available() probe.
+    UI_OD: str = "AUTODEV_UI_OD"
+    # Number of topic-aware directions to generate (default 3).
+    UI_DIRECTION_COUNT: str = "AUTODEV_UI_DIRECTION_COUNT"
+    # Total wall-clock budget per OD run before the adapter gives up.
+    OD_RUN_TIMEOUT: str = "AUTODEV_OD_RUN_TIMEOUT"
+    # Seconds between get_run polls during an OD run.
+    OD_POLL_INTERVAL: str = "AUTODEV_OD_POLL_INTERVAL"
+
     # Visual reviewer dev-server URL.
     VISUAL_BASE_URL: str = "AUTODEV_VISUAL_BASE_URL"
 

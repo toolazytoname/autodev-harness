@@ -21,6 +21,7 @@ from harness.adapters.base import (
     TransientError,
 )
 from harness.adapters.claude import ClaudeAdapter
+from harness.adapters.open_design import OpenDesignAdapter
 
 # Map of adapter name (the value of ``TierConfig.adapter``) to the
 # concrete class. Adding a new backend: import the class above and
@@ -29,6 +30,12 @@ from harness.adapters.claude import ClaudeAdapter
 # ``harness.router.ModelRouter._load_config``).
 ADAPTER_REGISTRY: dict[str, type[AdapterBase]] = {
     "claude": ClaudeAdapter,
+    # T45 — Open Design adapter is a fully-implemented backend (the
+    # implementation lives in ``harness.adapters.open_design``). Only
+    # wired when ``__main__`` detects an OD installation via
+    # ``harness.open_design.is_available()``; absent that, the UI phase
+    # silently falls back to Claude.
+    "open_design": OpenDesignAdapter,
 }
 
 __all__ = [
