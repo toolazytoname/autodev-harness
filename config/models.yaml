@@ -56,6 +56,7 @@ assignments:
   review.correctness: reviewer
   review.test:     worker      # 跑命令为主，判断为辅
   review.boundary: reviewer
+  review.security: reviewer
   review.visual:   reviewer
   review.a11y:     worker
   escalation:      architect   # gate 撞顶仲裁

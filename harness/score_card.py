@@ -12,6 +12,7 @@ kicks in at the *retry* layer above this module — see
 from __future__ import annotations
 
 import json
+import re
 import textwrap
 from datetime import datetime, timezone
 from enum import Enum
@@ -130,21 +131,51 @@ def parse_score_card(raw: str | dict) -> ScoreCard:
         raise ScoreCardParseError(raw, exc) from exc
 
 
-def extract_json_from_fenced(text: str) -> str:
-    """Strip markdown code fences from a string and return the inner JSON.
+_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*\n?(.*?)\n?```", re.DOTALL)
 
-    Handles both ````json`...``` and plain (unfenced) JSON.
+
+def extract_json_from_fenced(text: str) -> str:
+    """Extract a JSON object from free-form model output.
+
+    Reviewer prompts ask the model to narrate its analysis and put the
+    score card "at the end of your response" — so the JSON is often
+    preceded by prose, not just wrapped in a leading fence. Tries, in
+    order:
+
+    1. A fenced ```json ... ``` block anywhere in the text (last one
+       wins, since narration may contain earlier unrelated fences).
+    2. The last balanced top-level ``{...}`` span in the text.
+    3. The stripped text itself, unchanged.
     """
-    text = text.strip()
-    # Strip opening fence if present
-    for fence in ("```json", "```JSON", "```"):
-        if text.startswith(fence):
-            text = text[len(fence) :]
-            # Strip the closing fence too
-            if text.rstrip().endswith("```"):
-                text = text[: text.rstrip().rfind("```")].rstrip()
-            break
-    return text.strip()
+    stripped = text.strip()
+
+    fence_matches = _FENCE_RE.findall(stripped)
+    if fence_matches:
+        return fence_matches[-1].strip()
+
+    last_object = _last_balanced_json_object(stripped)
+    if last_object is not None:
+        return last_object
+
+    return stripped
+
+
+def _last_balanced_json_object(text: str) -> Optional[str]:
+    """Return the last top-level ``{...}`` span in ``text``, or None."""
+    depth = 0
+    start: Optional[int] = None
+    last_span: Optional[str] = None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    last_span = text[start : i + 1]
+    return last_span
 
 
 # ---------------------------------------------------------------------------
