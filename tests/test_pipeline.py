@@ -14,7 +14,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.adapters.base import AgentResult, Usage
-from harness.artifacts import Phase, TaskStatus, read_task_queue, read_workflow_state
+from harness.artifacts import (
+    Phase,
+    TaskQueue,
+    TaskStatus,
+    read_task_queue,
+    read_workflow_state,
+    write_task_queue,
+)
 from harness.pipeline import (
     Pipeline,
     PipelineConfig,
@@ -392,6 +399,46 @@ class TestDevelopPhase:
             executed.append(task_id)
             # Simulate the inner loop marking the task completed
             from harness.artifacts import TaskQueue, complete_task, write_task_queue
+
+            queue = read_task_queue(project_dir)
+            write_task_queue(project_dir, complete_task(queue, task_id))
+            return []
+
+        with patch("harness.pipeline.run_inner_loop", side_effect=fake_inner_loop):
+            p.phase_develop()
+
+        assert executed == ["task-1", "task-2"]
+        queue = read_task_queue(project_dir)
+        assert all(t.status == TaskStatus.COMPLETED for t in queue.tasks)
+
+    def test_resumes_task_stranded_in_progress_by_a_prior_crash(
+        self, project_dir, mock_router, agents_dir
+    ):
+        """T18: a task left IN_PROGRESS by an interrupted run (adapter crash,
+        routing bug, process kill) must be retried on --continue, not
+        orphaned forever. Regression test for the bug where develop_phase
+        only scanned for PENDING tasks: an IN_PROGRESS task was neither
+        runnable nor BLOCKED, so the loop exited immediately and logged
+        "All tasks completed" without ever generating task-1 or task-2.
+        """
+        self._prepare(project_dir)
+        queue = read_task_queue(project_dir)
+        stranded = TaskQueue(
+            tasks=[
+                t.model_copy(update={"status": TaskStatus.IN_PROGRESS})
+                if t.id == "task-1"
+                else t
+                for t in queue.tasks
+            ]
+        )
+        write_task_queue(project_dir, stranded)
+        p = make_pipeline(project_dir, MagicMock(), mock_router, agents_dir)
+
+        executed = []
+
+        def fake_inner_loop(*, project_dir, task_id, **_kw):
+            executed.append(task_id)
+            from harness.artifacts import complete_task, write_task_queue
 
             queue = read_task_queue(project_dir)
             write_task_queue(project_dir, complete_task(queue, task_id))

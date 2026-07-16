@@ -134,11 +134,23 @@ class DevelopPhase:
     # ------------------------------------------------------------------
 
     def _next_runnable_task(self, queue) -> Optional[object]:
-        """First pending task whose dependencies are completed and not blocked."""
+        """First pending (or resumable) task whose deps are completed and not blocked.
+
+        T18 marks a task IN_PROGRESS on disk before the generator runs, so a
+        crash mid-task (adapter error, routing bug, process kill) leaves it
+        IN_PROGRESS rather than PENDING or COMPLETED — that's the documented
+        signal for ``--continue`` to "pick up where we left off" (see
+        ``mark_task_in_progress``'s docstring). Restricting this scan to
+        PENDING only orphans IN_PROGRESS tasks forever: they're never
+        runnable, never BLOCKED, so the develop loop silently reports "All
+        tasks completed" without ever retrying them. run_inner_loop always
+        restarts an interrupted task at iter_num=1, and create_worktree is
+        idempotent for an existing task branch, so re-entering here is safe.
+        """
         completed = {t.id for t in queue.tasks if t.status == TaskStatus.COMPLETED}
         blocked = {t.id for t in queue.tasks if t.status == TaskStatus.BLOCKED}
         for task in queue.tasks:
-            if task.status != TaskStatus.PENDING:
+            if task.status not in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS):
                 continue
             deps = task.dependencies or []
             if any(d in blocked for d in deps):
