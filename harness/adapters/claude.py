@@ -240,16 +240,24 @@ class ClaudeAdapter(AdapterBase):
             raise classified
 
         if exit_code != 0:
-            # Exit code 1 with empty stderr / stdout is the proxy-flake
-            # signature we've been hitting: the upstream provider is
-            # unreachable, claude CLI prints nothing, exits 1. Without
-            # this branch it becomes a generic AdapterError (not
-            # retried) and burns the entire pipeline. Promoting it to
-            # TransientError makes it retryable with the same back-off
-            # schedule as 5xx.
-            if exit_code == 1 and not stderr.strip() and not stdout.strip():
+            # Exit code 1 with empty stderr is the proxy-flake signature
+            # we've been hitting: the upstream provider hiccups, claude
+            # CLI exits 1 with no stderr diagnostic. _classify_error
+            # (above) already had first crack at any structured JSON
+            # error envelope on stdout — if it found nothing actionable
+            # there and stderr is empty, we have zero diagnostic info to
+            # act on. That opacity is the actual signal, not "stdout must
+            # also be empty": a long-running generator call can print
+            # partial output (streaming text, an interrupted JSON blob)
+            # before dying with the same uninformative exit 1. Requiring
+            # empty stdout too meant that case fell through to a
+            # non-retried generic AdapterError and burned the entire
+            # pipeline on what was almost certainly the same transient
+            # failure. Promoting it to TransientError makes it retryable
+            # with the same back-off schedule as 5xx.
+            if exit_code == 1 and not stderr.strip():
                 raise TransientError(
-                    f"claude exited with code 1 and no output — "
+                    f"claude exited with code 1 with no stderr diagnostic — "
                     f"likely upstream provider unreachable"
                 )
             raise AdapterError(

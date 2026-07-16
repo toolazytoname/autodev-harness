@@ -305,6 +305,59 @@ def test_clean_json_with_empty_stderr_returns_none():
 
 
 # ---------------------------------------------------------------------------
+# Group D2: exit code 1 with empty stderr must retry regardless of stdout
+# ---------------------------------------------------------------------------
+
+
+def test_exit_1_empty_stderr_with_nonempty_stdout_triggers_retry():
+    """Real-world crash signature: a long-running generator call prints
+    partial, non-JSON output to stdout (e.g. an interrupted stream) then
+    the CLI exits 1 with no stderr diagnostic. This must still be
+    retried — requiring stdout to *also* be empty let this fall through
+    to a non-retried generic AdapterError and aborted the whole pipeline
+    on what was the same opaque, transient failure."""
+    from harness.adapters.base import TransientError
+
+    adapter = ClaudeAdapter()
+
+    responses = [
+        mock_proc(stdout="partial output before the CLI died", stderr="", returncode=1),
+        mock_proc(stdout=DUMMY_CLAUDE_JSON, returncode=0),
+    ]
+
+    with patch("subprocess.Popen", side_effect=responses):
+        with patch("time.sleep"):
+            result = adapter.run("hi", model="haiku-4-5-20251001", cwd=Path("/tmp"))
+
+    assert result.exit_code == 0
+    assert result.retry_count == 1
+
+
+def test_exit_1_empty_stderr_and_stdout_still_classifies_as_transient():
+    """Original no-output proxy-flake signature must still be covered."""
+    from harness.adapters.base import TransientError
+
+    adapter = ClaudeAdapter()
+    with pytest.raises(TransientError):
+        adapter._post_subprocess(stdout="", stderr="", exit_code=1, duration_ms=10, attempt=0)
+
+
+def test_exit_1_with_nonempty_stderr_still_raises_plain_adapter_error():
+    """A genuine, diagnosable exit-1 failure (real stderr message, not a
+    recognized 429/5xx/quota pattern) must NOT be swallowed into a
+    silent retry — it should still surface as a plain AdapterError."""
+    adapter = ClaudeAdapter()
+
+    with pytest.raises(AdapterError) as exc_info:
+        adapter._post_subprocess(
+            stdout="", stderr="permission denied: /root/.ssh", exit_code=1,
+            duration_ms=10, attempt=0,
+        )
+    from harness.adapters.base import TransientError
+    assert not isinstance(exc_info.value, TransientError)
+
+
+# ---------------------------------------------------------------------------
 # Group E: transient OS errors (ConnectionError / BrokenPipeError) must retry
 # ---------------------------------------------------------------------------
 
