@@ -193,6 +193,38 @@ class ModelRouter:
         self._config_path = Path(config_path)
         self._config: ModelsConfig = self._load_config()
 
+        # T47 — every tier's fallback must be a real *downgrade*,
+        # distinct from the primary. Two reasons:
+        #
+        #   1. If primary and fallback are the same model, the second
+        #      retry just re-uses the model that already failed — the
+        #      whole point of having a fallback is to escape to
+        #      something cheaper/different.
+        #
+        #   2. If both point to a dead backend, the retry loop silently
+        #      burns the retry budget and AdapterError-propagates with
+        #      no escape hatch — the user sees a stuck run.
+        #
+        # ``cli-default`` is the exception: when the primary model is
+        # "defer to the user's CLI config", the fallback can ALSO be
+        # "cli-default" — both defer to the same underlying config, so
+        # they're functionally distinct because the CLI may pick a
+        # different model on the second attempt (e.g. after the user
+        # updates settings.json between attempts). For non-cli-default
+        # configurations, enforce strict inequality.
+        for tier_name, spec in self._config.tiers.items():
+            if (
+                spec.fallback
+                and spec.fallback == spec.model
+                and spec.model != "cli-default"
+            ):
+                raise ValueError(
+                    f"tier '{tier_name}' has fallback == model ({spec.model!r}). "
+                    f"Fallback must be a real downgrade (different model name). "
+                    f"If you genuinely want both to defer to the user's CLI "
+                    f"default, set both to the literal string 'cli-default'."
+                )
+
         # Flatten validated tier specs for fast lookup.
         self._tier_specs: dict[str, ModelSpec] = {
             tier_name: ModelSpec(
@@ -210,6 +242,15 @@ class ModelRouter:
 
         self._assignments: dict[str, str] = dict(self._config.assignments)
 
+        # T47 — quarantine set: models that have been observed to fail
+        # (timeout / exit 1 / 5xx / 429) within this process's lifetime.
+        # resolve() walks the [primary, fallback] chain and skips any
+        # quarantined model so the next caller escapes to a different
+        # backend instead of retrying the same dead one. Keyed by
+        # (tier, model) so the same model name on a different tier is
+        # not penalized globally.
+        self._quarantine: set[tuple[str, str]] = set()
+
         # Budget tracking
         self._budgets: dict[str, _TierBudget] = {
             tier: _TierBudget() for tier in self._tier_specs
@@ -218,6 +259,57 @@ class ModelRouter:
         self._stop_at: float = self._config.budget.stop_at_percent / 100.0
 
     # ---- public API ----
+
+    def quarantine(self, tier: str, model: str, reason: str) -> None:
+        """Mark ``(tier, model)`` as unhealthy so resolve() skips it.
+
+        T47 — called by the adapter when a model call fails (timeout,
+        exit 1, 5xx, 429). The next resolve() for the same tier walks
+        the [primary, fallback] chain and returns the first non-
+        quarantined candidate, so the caller escapes the dead backend
+        instead of re-trying it.
+
+        Quarantine is **process-local** — it does not persist across
+        process boundaries. That's intentional: model availability can
+        recover (proxy comes back, rate limit window expires), and a
+        stale quarantine from a previous run would needlessly cripple
+        a now-healthy model.
+
+        Parameters
+        ----------
+        tier
+            Tier name (architect / reviewer / worker).
+        model
+            The model identifier that failed. ``"cli-default"`` is a
+            valid value — quarantining it means "this CLI's default
+            model is currently sick", which then forces the adapter to
+            try the fallback (which is hopefully a pinned alias).
+        reason
+            Free-form description for the log line; not interpreted.
+        """
+        with self._lock:
+            self._quarantine.add((tier, model))
+        # Best-effort log; logger import is lazy to avoid a cycle.
+        from harness.logging_setup import get_logger
+        get_logger(__name__).warning(
+            "model_quarantined",
+            extra={"tier": tier, "model": model, "reason": reason},
+        )
+
+    def is_quarantined(self, tier: str, model: str) -> bool:
+        """Return True iff ``(tier, model)`` is currently quarantined."""
+        with self._lock:
+            return (tier, model) in self._quarantine
+
+    def clear_quarantine(self, tier: Optional[str] = None) -> None:
+        """Drop quarantine entries. Mostly useful for tests."""
+        with self._lock:
+            if tier is None:
+                self._quarantine.clear()
+            else:
+                self._quarantine = {
+                    (t, m) for (t, m) in self._quarantine if t != tier
+                }
 
     def resolve(self, stage: str) -> ModelSpec:
         """Resolve a pipeline stage to a ModelSpec.
@@ -230,7 +322,12 @@ class ModelRouter:
         Returns
         -------
         ModelSpec
-            The resolved model specification.
+            The resolved model specification. If the primary model is
+            currently quarantined, the returned spec's ``model`` field
+            carries the fallback (so the caller retries a different
+            backend). If BOTH primary and fallback are quarantined, the
+            returned spec has ``model=None`` — callers must treat this
+            as a hard failure (no usable backend in this tier).
 
         Raises
         ------
@@ -248,7 +345,7 @@ class ModelRouter:
 
         # If any env override is present, build a new spec (base is frozen)
         if env_model or env_base_url or env_fallback:
-            return ModelSpec(
+            spec = ModelSpec(
                 model=env_model or base.model,
                 tier=tier_name,
                 base_url=env_base_url or base.base_url,
@@ -257,8 +354,24 @@ class ModelRouter:
                 # the resolver still knows which backend to use.
                 adapter=base.adapter,
             )
+        else:
+            spec = base
 
-        return base
+        # T47 — quarantine skip. Walk the [primary, fallback] chain and
+        # return the first non-quarantined candidate. If both are sick,
+        # return the original spec with ``model=None`` — the adapter
+        # will raise a clear "no backend" error instead of silently
+        # retrying a dead model.
+        with self._lock:
+            quarantine_snapshot = set(self._quarantine)
+
+        if (tier_name, spec.model) not in quarantine_snapshot:
+            return spec
+
+        if spec.fallback and (tier_name, spec.fallback) not in quarantine_snapshot:
+            return spec.model_copy(update={"model": spec.fallback})
+
+        return spec.model_copy(update={"model": None})
 
     def record(self, stage: str, usage: "Usage") -> None:
         """Record token usage for a stage, accumulating into tier totals.

@@ -1,38 +1,53 @@
 # AutoDevHarness v2 — Model Routing Table
 # Per MASTER-PLAN §4
 #
-# Usage in code:
-#   from harness.router import ModelRouter, ModelSpec
-#   router = ModelRouter()
-#   spec = router.resolve("generate")  # -> ModelSpec(model=..., tier=..., ...)
+# Resolution order (first hit wins):
+#   1. ``AUTODEV_MODEL_<TIER>`` env var             — explicit pin
+#   2. ``model`` field in this YAML                — YAML default
+#   3. claude CLI's own default (no ``--model``)   — defer to user's
+#      ``~/.claude/settings.json`` (ANTHROPIC_MODEL) or whatever CLI is
+#      configured
+#
+# For #3 to actually kick in, the YAML ``model`` field below must be
+# the literal string ``"cli-default"``. When the router sees that
+# sentinel, the adapter calls the CLI WITHOUT ``--model`` and the user
+# keeps full control via their own settings.json.
+#
+# Why "cli-default" instead of pinning "sonnet" / "opus" / "haiku":
+# those CLI role aliases are Claude-specific — they don't translate to
+# other CLIs (codex, gemini-cli, etc.). Pinning them in YAML couples
+# harness to one CLI vendor and breaks the moment a user swaps
+# providers. Letting the CLI pick its own default keeps the harness
+# vendor-neutral.
 #
 # Environment-variable overrides (take precedence over this file):
-#   AUTODEV_MODEL_<TIER>   = e.g. "claude-opus-4-8"
+#   AUTODEV_MODEL_<TIER>   = e.g. "sonnet" or "claude-opus-4-8"
 #   AUTODEV_BASE_URL_<TIER> = e.g. "https://api.example.com/v1"
-#   AUTODEV_FALLBACK_<TIER> = e.g. "haiku-4-5"
+#   AUTODEV_FALLBACK_<TIER> = same scheme as MODEL — ``cli-default`` is
+#                             allowed here too
 
 tiers:
-  # architect: Opus — plan, gate撞顶仲裁, 最终验收
+  # architect: defer to CLI default — user controls via their own config
   architect:
-    model: claude-opus-4-8
-    fallback: claude-sonnet-5
+    model: cli-default
+    fallback: cli-default
     # T29: absolute per-tier token cap. warn_at/stop_at percent below
     # are computed against this number. Tune via AUTODEV_BUDGET_ARCHITECT
     # env var if a single project needs a different cap.
     max_tokens: 2000000
 
-  # reviewer: Sonnet档 — 评审需要判断力但不需要顶级架构能力
+  # reviewer: defer to CLI default
   reviewer:
-    model: claude-sonnet-5
-    fallback: claude-haiku-4-5-20251001
+    model: cli-default
+    fallback: cli-default
     max_tokens: 5000000
 
-  # worker: 便宜档 — generate/修复/文档/research摘要。
-  # 本机仅 Claude 订阅鉴权，worker 用 Haiku（无 base_url，走默认端点）。
-  # 若接 MiniMax/GLM 等第三方，改回 model + base_url + AUTODEV_API_KEY_WORKER。
+  # worker: defer to CLI default — same model for generate + fallback.
+  # If you want different models per tier, set AUTODEV_MODEL_<TIER>
+  # at process start (no YAML edit needed).
   worker:
-    model: claude-haiku-4-5-20251001
-    fallback: claude-haiku-4-5-20251001
+    model: cli-default
+    fallback: cli-default
     max_tokens: 10000000
 
 # Budget thresholds per tier (MASTER-PLAN §5.7, wired in T29).

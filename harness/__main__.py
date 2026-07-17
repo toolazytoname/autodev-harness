@@ -321,7 +321,44 @@ def main(argv: list[str] | None = None) -> int:
     # adapter so the UI design phase can be visualized in the OD app.
     # Hosts without OD fall back silently to Claude.
     ui_adapter = _resolve_ui_adapter()
-    pipeline = Pipeline(config, adapter=ClaudeAdapter(), ui_adapter=ui_adapter)
+
+    # T47 — build the router up front so the adapter can report model
+    # failures back into the quarantine set. The adapter doesn't know
+    # which stage / tier a call came from (it only sees a model name);
+    # this closure captures the current call's tier so the router can
+    # quarantine the right (tier, model) pair.
+    from harness.router import ModelRouter
+    _router = ModelRouter()
+
+    def _make_failure_reporter(tier: str):
+        def _report(model: str, exc: BaseException) -> None:
+            _router.quarantine(
+                tier=tier,
+                model=model,
+                reason=f"{type(exc).__name__}: {exc}",
+            )
+        return _report
+
+    # The ClaudeAdapter does not know which stage/tier it is serving.
+    # We register a single reporter that quarantines the model under
+    # every tier it could plausibly serve — worst case we over-quarantine
+    # (same model on a healthy tier gets skipped too), but the failure
+    # was real, so erring on the side of "skip and try fallback" is
+    # strictly safer than the previous "retry the same dead backend"
+    # behaviour.
+    def _report_all_tiers(model: str, exc: BaseException) -> None:
+        for tier in _router._tier_specs:
+            _router.quarantine(
+                tier=tier,
+                model=model,
+                reason=f"{type(exc).__name__}: {exc}",
+            )
+
+    pipeline = Pipeline(
+        config,
+        adapter=ClaudeAdapter(failure_reporter=_report_all_tiers),
+        ui_adapter=ui_adapter,
+    )
 
     # T41: grill the user with a fixed set of questions before any
     # model call. Skippable via --no-preflight or via the

@@ -18,6 +18,7 @@ from harness.adapters.base import (
     AdapterError,
     AgentResult,
     RateLimitError,
+    ServerError,
     TimeoutError,
     Usage,
 )
@@ -323,3 +324,164 @@ def test_usage_model():
     assert u.output_tokens == 200
     assert u.total_tokens == 300
     assert u.duration_ms == 1500
+
+
+# ---------------------------------------------------------------------------
+# T47 — adapter failure_reporter wires back into router quarantine
+# ---------------------------------------------------------------------------
+
+
+def test_adapter_failure_reporter_fires_on_retry_exhaustion():
+    """When RETRY_MAX_ATTEMPTS are exhausted on a model, the adapter
+    must call its failure_reporter exactly once with (model, exc).
+    This is the hook router.quarantine() relies on for fast-fail."""
+    reports: list[tuple[str, BaseException]] = []
+    adapter = ClaudeAdapter(
+        failure_reporter=lambda model, exc: reports.append((model, exc))
+    )
+
+    # Always fail with RateLimitError — exhausts all 3 retries.
+    responses = [
+        MagicMock(
+            returncode=1,
+            communicate=MagicMock(
+                return_value=("", "HTTP 429 Too Many Requests",),
+            ),
+        ),
+    ] * 5  # plenty of mocks
+
+    with patch("subprocess.Popen", side_effect=responses):
+        with patch("time.sleep"):  # skip backoff
+            with pytest.raises(RateLimitError):
+                adapter.run("hi", model="haiku-4-5", cwd=Path("/tmp"))
+
+    assert len(reports) == 1, (
+        f"expected exactly one failure report, got {len(reports)}"
+    )
+    model, exc = reports[0]
+    assert model == "haiku-4-5"
+    assert isinstance(exc, RateLimitError)
+
+
+def test_adapter_failure_reporter_does_not_fire_on_success():
+    """A successful run must NOT trigger the failure reporter —
+    quarantining a healthy model would silently kill it for the rest
+    of the process's lifetime."""
+    reports: list[tuple[str, BaseException]] = []
+    adapter = ClaudeAdapter(
+        failure_reporter=lambda model, exc: reports.append((model, exc))
+    )
+
+    ok_response = MagicMock(
+        returncode=0,
+        communicate=MagicMock(
+            return_value=(
+                json.dumps({
+                    "result": "hello",
+                    "usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+                }),
+                "",
+            ),
+        ),
+    )
+
+    with patch("subprocess.Popen", return_value=ok_response):
+        result = adapter.run("hi", model="haiku-4-5", cwd=Path("/tmp"))
+
+    assert result.exit_code == 0
+    assert reports == [], (
+        f"successful run must not report failure, got {reports!r}"
+    )
+
+
+def test_adapter_failure_reporter_swallows_reporter_exceptions():
+    """If the reporter itself raises (bug in router, etc.), the
+    adapter must still propagate the original error to the caller —
+    observability must never mask control flow."""
+    def buggy_reporter(model: str, exc: BaseException) -> None:
+        raise RuntimeError("reporter bug")
+
+    adapter = ClaudeAdapter(failure_reporter=buggy_reporter)
+
+    fail_response = MagicMock(
+        returncode=1,
+        communicate=MagicMock(
+            return_value=("", "HTTP 500 Internal Server Error",),
+        ),
+    )
+
+    with patch("subprocess.Popen", side_effect=[fail_response] * 5):
+        with patch("time.sleep"):
+            with pytest.raises(ServerError):
+                adapter.run("hi", model="haiku-4-5", cwd=Path("/tmp"))
+
+
+def test_end_to_end_quarantine_chain():
+    """End-to-end: build a router with a tier whose fallback is a
+    different model, then simulate one model failing through the
+    adapter, and confirm the next resolve() returns the fallback."""
+    from harness.router import ModelRouter
+
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as cfg:
+        cfg.write(
+            """
+tiers:
+  worker:
+    model: sonnet
+    fallback: haiku
+    max_tokens: 1000
+assignments:
+  generate: worker
+"""
+        )
+        cfg_path = Path(cfg.name)
+
+    router = ModelRouter(config_path=cfg_path)
+
+    reports: list[tuple[str, BaseException]] = []
+    adapter = ClaudeAdapter(
+        failure_reporter=lambda model, exc: reports.append((model, exc))
+    )
+
+    # Wire the adapter's failure_reporter to the router's quarantine
+    # for the worker tier.
+    def router_reporter(model: str, exc: BaseException) -> None:
+        router.quarantine(
+            tier="worker",
+            model=model,
+            reason=f"{type(exc).__name__}: {exc}",
+        )
+
+    adapter._failure_reporter = router_reporter
+
+    fail_response = MagicMock(
+        returncode=1,
+        communicate=MagicMock(
+            return_value=("", "HTTP 500 Internal Server Error",),
+        ),
+    )
+
+    # Resolve the spec to get the primary model name
+    spec = router.resolve("generate")
+    assert spec.model == "sonnet"
+
+    # Simulate the primary model failing all retries
+    with patch("subprocess.Popen", side_effect=[fail_response] * 5):
+        with patch("time.sleep"):
+            with pytest.raises(ServerError):
+                adapter.run(
+                    "hi",
+                    model=spec.model,
+                    cwd=Path("/tmp"),
+                )
+
+    # Primary is now quarantined; next resolve returns fallback
+    spec2 = router.resolve("generate")
+    assert spec2.model == "haiku", (
+        f"expected fallback (haiku) after primary quarantined, got {spec2.model!r}"
+    )
+    assert router.is_quarantined("worker", "sonnet")
+    assert not router.is_quarantined("worker", "haiku")
+
+    cfg_path.unlink()

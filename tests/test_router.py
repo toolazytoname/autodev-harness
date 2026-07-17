@@ -312,3 +312,174 @@ def test_budget_thread_safety(tmp_path):
         t.join()
 
     assert router.spent_by_tier()["worker"] == 10000
+
+
+# ---------------------------------------------------------------------------
+# T47 — quarantine, cli-default, fallback validation
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_must_differ_from_model_for_pinned_tiers(tmp_path):
+    """Pinned tiers (model != 'cli-default') MUST have a fallback that's
+    different from the primary — same-name fallback is a no-op that
+    silently retries the dead backend."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(
+        """
+tiers:
+  worker:
+    model: claude-haiku-4-5-20251001
+    fallback: claude-haiku-4-5-20251001
+    max_tokens: 1000
+assignments:
+  generate: worker
+"""
+    )
+    with pytest.raises(ValueError, match="fallback == model"):
+        ModelRouter(config_path=cfg)
+
+
+def test_cli_default_passes_when_both_model_and_fallback_match(tmp_path):
+    """``cli-default`` is the one allowed exception: when BOTH model
+    and fallback are ``cli-default`` (meaning "let the user's CLI pick
+    the underlying model"), it's not a no-op because the CLI may
+    actually pick a different model on retry (e.g. user updates
+    settings.json between attempts)."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(
+        """
+tiers:
+  worker:
+    model: cli-default
+    fallback: cli-default
+    max_tokens: 1000
+assignments:
+  generate: worker
+"""
+    )
+    router = ModelRouter(config_path=cfg)
+    spec = router.resolve("generate")
+    assert spec.model == "cli-default"
+
+
+def test_quarantine_skips_dead_model_returns_fallback(tmp_path):
+    """resolve() returns the fallback when the primary is quarantined."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(
+        """
+tiers:
+  worker:
+    model: sonnet
+    fallback: haiku
+    max_tokens: 1000
+assignments:
+  generate: worker
+"""
+    )
+    router = ModelRouter(config_path=cfg)
+
+    # Before quarantine: returns sonnet
+    assert router.resolve("generate").model == "sonnet"
+
+    # Quarantine sonnet on worker tier
+    router.quarantine("worker", "sonnet", "test simulation")
+
+    # After quarantine: returns haiku (the fallback)
+    spec = router.resolve("generate")
+    assert spec.model == "haiku"
+    assert router.is_quarantined("worker", "sonnet")
+
+
+def test_quarantine_both_models_returns_none_model(tmp_path):
+    """When BOTH primary and fallback are quarantined, resolve()
+    returns a spec with ``model=None`` so the adapter raises a clear
+    'no usable backend' error instead of silently retrying a dead
+    backend."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(
+        """
+tiers:
+  worker:
+    model: sonnet
+    fallback: haiku
+    max_tokens: 1000
+assignments:
+  generate: worker
+"""
+    )
+    router = ModelRouter(config_path=cfg)
+    router.quarantine("worker", "sonnet", "test 1")
+    router.quarantine("worker", "haiku", "test 2")
+
+    spec = router.resolve("generate")
+    assert spec.model is None, (
+        "expected model=None when both primary and fallback are "
+        f"quarantined, got model={spec.model!r}"
+    )
+
+
+def test_quarantine_is_tier_scoped(tmp_path):
+    """Quarantining (worker, sonnet) does NOT affect (reviewer, sonnet).
+    Different tiers may have different operational health — a model
+    failing on a worker batch job shouldn't be assumed dead for the
+    reviewer's separate review job."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(
+        """
+tiers:
+  worker:
+    model: sonnet
+    fallback: haiku
+    max_tokens: 1000
+  reviewer:
+    model: sonnet
+    fallback: haiku
+    max_tokens: 1000
+assignments:
+  generate: worker
+  review.correctness: reviewer
+"""
+    )
+    router = ModelRouter(config_path=cfg)
+    router.quarantine("worker", "sonnet", "test worker dead")
+
+    assert router.is_quarantined("worker", "sonnet")
+    assert not router.is_quarantined("reviewer", "sonnet")
+    # reviewer's resolve() still returns sonnet (healthy on this tier)
+    assert router.resolve("review.correctness").model == "sonnet"
+    # worker's resolve() returns the fallback
+    assert router.resolve("generate").model == "haiku"
+
+
+def test_clear_quarantine(tmp_path):
+    """clear_quarantine(tier=...) drops only that tier's entries;
+    clear_quarantine() drops everything."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(
+        """
+tiers:
+  worker:
+    model: sonnet
+    fallback: haiku
+    max_tokens: 1000
+  reviewer:
+    model: sonnet
+    fallback: haiku
+    max_tokens: 1000
+assignments:
+  generate: worker
+  review.correctness: reviewer
+"""
+    )
+    router = ModelRouter(config_path=cfg)
+    router.quarantine("worker", "sonnet", "x")
+    router.quarantine("reviewer", "sonnet", "x")
+    assert router.is_quarantined("worker", "sonnet")
+    assert router.is_quarantined("reviewer", "sonnet")
+
+    router.clear_quarantine(tier="worker")
+    assert not router.is_quarantined("worker", "sonnet")
+    assert router.is_quarantined("reviewer", "sonnet")
+
+    router.clear_quarantine()
+    assert not router.is_quarantined("reviewer", "sonnet")

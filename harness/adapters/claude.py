@@ -438,15 +438,21 @@ class ClaudeAdapter(AdapterBase):
         permission-prompted sandbox and every file mutation blocks
         waiting for an interactive approval that never comes — the
         classic "generator wrote zero files" failure mode.
+
+        Special sentinel ``model == "cli-default"`` means: do not pass
+        ``--model`` at all, letting the CLI resolve its own default from
+        the user's local settings (ANTHROPIC_MODEL, etc.). This keeps the
+        harness vendor-neutral and lets the user swap underlying models
+        without touching harness config.
         """
         cmd = [
             "claude",
             "-p",
-            "--model",
-            model,
             "--output-format",
             "json",
         ]
+        if model != "cli-default":
+            cmd.extend(["--model", model])
         if allowed_tools:
             cmd.extend(["--allowedTools", ",".join(allowed_tools)])
         return cmd

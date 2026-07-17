@@ -219,6 +219,37 @@ class AdapterBase(ABC):
     RETRY_RATELIMIT_CODES: set[int] = {429}
     RETRY_SERVER_ERROR_CODES: set[int] = {500, 502, 503, 504}
 
+    def __init__(self, *args, failure_reporter=None, **kwargs) -> None:
+        """T47 — optional failure callback.
+
+        ``failure_reporter`` is called exactly once per *failed* retry
+        loop (i.e. after all RETRY_MAX_ATTEMPTS are exhausted on a
+        single model, before fallback kicks in). Signature:
+
+            failure_reporter(model: str, exc: BaseException) -> None
+
+        It exists so the adapter can tell the router "this model is
+        sick right now" without creating an import cycle (router
+        imports adapters, so adapters can't import router). The
+        pipeline injects a closure that calls
+        ``router.quarantine(tier, model, reason)``. If no reporter is
+        provided (e.g. in unit tests that don't care), the adapter
+        silently moves on.
+        """
+        super().__init__(*args, **kwargs)
+        self._failure_reporter = failure_reporter
+
+    def _report_failure(self, model: str, exc: BaseException) -> None:
+        """Best-effort fire of the failure reporter. Swallows any
+        reporter exception — the reporter is observability, not control
+        flow, so its failure must not mask the original error."""
+        if self._failure_reporter is None:
+            return
+        try:
+            self._failure_reporter(model, exc)
+        except Exception:  # noqa: BLE001 — observability must never raise
+            pass
+
     def run(
         self,
         prompt: str,
@@ -404,6 +435,13 @@ class AdapterBase(ABC):
         # fallback layer can introspect. Fall back to AdapterError when
         # no retryable was ever captured.
         if last_retryable is not None:
+            # T47 — notify the router that this model is currently
+            # unhealthy. Done here (not in the except RETRYABLE_EXCEPTIONS
+            # branch) because we want exactly one report per *exhausted*
+            # model, not one per attempt. The router will mark this model
+            # quarantined so the next resolve() picks the fallback instead
+            # of re-trying the same dead backend.
+            self._report_failure(model, last_retryable)
             raise last_retryable
         if last_result is not None:
             raise AdapterError(
