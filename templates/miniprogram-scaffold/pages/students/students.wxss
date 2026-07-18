@@ -1,0 +1,30 @@
+/* pages/students/students.wxss */
+.page { min-height: 100vh; background: var(--bg); padding-bottom: env(safe-area-inset-bottom); }
+.appbar { display: flex; align-items: center; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.appbar__title { font-size: 17px; font-weight: 600; color: var(--ink); }
+.appbar__grow { flex: 1; }
+.appbar__act {
+  background: var(--aqua-tint); color: var(--aqua-600); border: none;
+  border-radius: var(--radius-xs); padding: 6px 12px; font-size: 13px; font-weight: 600;
+}
+.searchbar {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border-radius: var(--radius-s);
+  padding: 10px 14px; box-shadow: var(--shadow);
+}
+.searchbar input { flex: 1; font-size: 14px; color: var(--ink); }
+.filters { display: flex; gap: 8px; margin-top: 12px; white-space: nowrap; }
+.empty { text-align: center; color: var(--muted); padding: 40px 0; font-size: 13px; }
+.scrim {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100;
+  display: flex; align-items: flex-end;
+}
+.scrim--center { align-items: center; justify-content: center; }
+.sheet {
+  background: var(--surface); width: 100%; border-radius: var(--radius) var(--radius) 0 0;
+  padding: 20px 16px; max-height: 80vh; overflow-y: auto;
+}
+.dialog {
+  background: var(--surface); width: 80%; border-radius: var(--radius);
+  padding: 20px;
+}

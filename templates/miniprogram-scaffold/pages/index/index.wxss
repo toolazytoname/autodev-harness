@@ -1,0 +1,20 @@
+/* pages/index/index.wxss — 首页样式
+   继承 app.wxss 的 token,这里只放 page-specific 规则 */
+.page {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.appbar {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.appbar__title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}

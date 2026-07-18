@@ -1,0 +1,50 @@
+/* AutoDevHarness — miniprogram scaffold
+   全局样式 — 导入 OD 设计 token + reset
+   ------------------------------------------------------------------------- */
+
+/* 移植自 Open Design 项目的 OKLCH token 系统
+   微信 wxss 对 oklch() 支持不稳定,这里用预编译的 hex 映射。
+   完整 token 表见 shared/token.wxss */
+@import './shared/token.wxss';
+
+page {
+  /* 基础排版 */
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--bg);
+
+  /* iPhone 安全区适配 */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* 全局工具类 */
+.flex { display: flex; }
+.flex-1 { flex: 1; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }
+
+/* 通用 card 容器(对应 OD 的 .card) */
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+/* 文字工具 */
+.muted { color: var(--muted); }
+.faint { color: var(--faint); }
+.mono { font-family: var(--mono); }
+
+/* 安全间距(对应 OD 的 .pad) */
+.pad { padding: 16px; }
+.pad-t { padding-top: 16px; }
+
+/* 角色门控:教练专属元素 */
+.coach-only { display: none; }
+[data-role="coach"] .coach-only { display: initial; }

@@ -83,6 +83,11 @@ class WorkflowState(pydantic.BaseModel):
     previous_phase: Optional[Phase] = pydantic.Field(default=None, validation_alias="previousPhase")
     completed_phases: list[Phase] = pydantic.Field(default_factory=list, validation_alias="completedPhases")
     mode: str = "default"
+    # OD HTML ingestion flag (T-Bridge). Set by `__main__` when the
+    # user passes `--design-draft DIR`. UIPhase reads this to switch
+    # into `mode=faithful` (skip 4-direction divergence).
+    # Default "freeform" so old state files deserialize without error.
+    brief_mode: str = pydantic.Field(default="freeform", validation_alias="briefMode")
     max_iterations: int = pydantic.Field(default=5, validation_alias="maxIterations")
     pass_threshold: float = pydantic.Field(default=0.8, validation_alias="passThreshold")
     iteration_count: int = pydantic.Field(default=0, validation_alias="iterationCount")

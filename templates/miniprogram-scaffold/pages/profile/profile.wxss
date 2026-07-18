@@ -1,0 +1,10 @@
+/* pages/profile/profile.wxss */
+.page { min-height: 100vh; background: var(--bg); }
+.appbar { display: flex; align-items: center; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.appbar__title { font-size: 17px; font-weight: 600; color: var(--ink); }
+.role-row { display: flex; align-items: center; justify-content: space-between; }
+.role-pill {
+  background: var(--aqua-tint); color: var(--aqua-600);
+  border: none; border-radius: var(--radius-xs);
+  padding: 6px 14px; font-size: 13px; font-weight: 600;
+}

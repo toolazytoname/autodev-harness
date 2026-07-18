@@ -1,0 +1,42 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/class-overview/class-overview",
+    "pages/students/students",
+    "pages/students/student-detail",
+    "pages/profile/profile"
+  ],
+  "window": {
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTitleText": "鱼跃 YuYue",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f1f5f9"
+  },
+  "tabBar": {
+    "color": "#6b7280",
+    "selectedColor": "#1976d2",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/students/students",
+        "text": "学员"
+      },
+      {
+        "pagePath": "pages/class-overview/class-overview",
+        "text": "成绩"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

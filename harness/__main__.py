@@ -91,6 +91,14 @@ def _build_parser() -> argparse.ArgumentParser:
              "project where preflight-answers.json is already filled in.",
     )
     parser.add_argument(
+        "--design-draft", dest="design_draft", type=Path, default=None, metavar="DIR",
+        help="T-Bridge: reverse-engineer an Open Design HTML project at DIR "
+             "into 000-brief.md before the pipeline starts. Sets "
+             "WorkflowState.brief_mode='od_reverse_engineer' which makes "
+             "UIPhase skip the 4-direction divergence loop and copy the "
+             "OD HTML into preview/versions/od-source/ instead.",
+    )
+    parser.add_argument(
         "project_dir", nargs="?", default=None,
         help="Project directory (default: cwd). Use 'config' / 'quota-status' "
              "to print the routing table or quota-hold status.",
@@ -284,7 +292,36 @@ def main(argv: list[str] | None = None) -> int:
     # Brief from CLI (after `--`), matching bash create_brief_from_args
     brief_words = [w for w in args.brief if w != "--"]
     brief_path = get_artifact_path(project_dir, "000-brief")
-    if brief_words and not brief_path.exists():
+
+    # T-Bridge: --design-draft DIR pre-empts free-form brief with an
+    # OD reverse-engineered brief (token table + business schema + page
+    # list). Sets brief_mode so UIPhase knows to skip 4-direction divergence.
+    brief_mode = "freeform"
+    if args.design_draft is not None:
+        if not args.design_draft.exists() or not args.design_draft.is_dir():
+            print(
+                f"❌ --design-draft path is not a directory: {args.design_draft}",
+                file=sys.stderr,
+            )
+            return EXIT_PIPELINE_ERROR
+        # Import lazily so test fixtures that mock the rest of __main__
+        # don't pay the (small) cost of pulling in od_ingest.
+        from harness import od_ingest
+
+        user_prompt = " ".join(brief_words)
+        brief_content = od_ingest.build_brief_markdown(args.design_draft, user_prompt)
+        if not brief_path.exists():
+            od_ingest.write_brief(project_dir, brief_content)
+            print(f"Brief created (from OD project): {brief_path}")
+        else:
+            print(f"Brief already exists, leaving in place: {brief_path}")
+        brief_mode = "od_reverse_engineer"
+        print(
+            f"📐  --design-draft detected: brief_mode='od_reverse_engineer' "
+            f"(source: {args.design_draft})"
+        )
+
+    if brief_mode == "freeform" and brief_words and not brief_path.exists():
         brief_path.write_text(f"# 项目需求\n\n{' '.join(brief_words)}\n")
         print(f"Brief created: {brief_path}")
 
@@ -314,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
         max_iterations=max_iterations,
         next_resume_count=next_resume_count,
         skip_ui_review=skip_ui,
+        brief_mode=brief_mode,
     )
 
     # T45 — Open Design probe. If OD is detected (or forced via

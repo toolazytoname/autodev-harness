@@ -1,0 +1,15 @@
+<!-- pages/index/index.wxml — 首页
+     由 generator 在 task-1 填充具体内容。当前仅含骨架。
+     generator 规则:这个文件可以任意扩展,wxml 不计入 page 逻辑行数限制。
+     page 逻辑 ≤ ~30 行指的是 *.js 文件。 -->
+<view class="page">
+  <view class="appbar">
+    <view class="appbar__title">鱼跃 · 首页</view>
+  </view>
+  <view class="pad">
+    <!-- TODO(g-1): 填充首页内容(由 generator 替换) -->
+    <view class="card">
+      <view class="muted">首页待生成</view>
+    </view>
+  </view>
+</view>

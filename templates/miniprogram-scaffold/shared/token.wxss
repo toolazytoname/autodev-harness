@@ -1,0 +1,65 @@
+/* AutoDevHarness — miniprogram scaffold
+   Design tokens — 移植自 Open Design 项目的 OKLCH token
+   -------------------------------------------------------------------------
+   OD 原始 token 用 oklch() 函数定义(见 shared.css)。
+   微信 wxss 对 oklch() 支持不稳定(部分 IDE 版本报错),
+   这里用预编译的 hex 映射,保留 token 名字。
+   完整 OKLCH → hex 映射表见 docs/OD-TO-MINIPROGRAM-MAPPING.md。
+   ------------------------------------------------------------------------- */
+
+/* Surface (背景层级) */
+page {
+  --bg:        #f1f5f9;  /* was: oklch(96% 0.021 226) */
+  --bg-2:      #e2e8f0;  /* was: oklch(93% 0.030 224) */
+  --surface:   #ffffff;  /* was: oklch(100% 0 0) */
+  --surface-2: #f7f9fb;  /* was: oklch(98% 0.010 226) */
+  --surface-3: #eef2f6;  /* was: oklch(96.5% 0.016 226) */
+}
+
+/* Ink (文字层级) */
+page {
+  --ink:    #364152;   /* was: oklch(29% 0.035 244) */
+  --ink-2:  #5b6675;   /* was: oklch(42% 0.028 240) */
+  --muted:  #8b95a3;   /* was: oklch(60% 0.020 238) */
+  --faint:  #b8c0cc;   /* was: oklch(72% 0.014 236) */
+  --line:   #e3e7ee;   /* was: oklch(92% 0.012 230) */
+  --line-2: #d3d9e3;   /* was: oklch(88% 0.016 230) */
+}
+
+/* Aqua (主色:泳池蓝) */
+page {
+  --aqua:      #2a73c4;   /* was: oklch(58% 0.118 242) */
+  --aqua-600:  #1d5da3;   /* was: oklch(52% 0.125 244) */
+  --aqua-300:  #6ea5d9;   /* was: oklch(74% 0.090 236) */
+  --aqua-tint: #d8e6f4;   /* was: oklch(95% 0.030 232) */
+  --aqua-wash: #ebf2f9;   /* was: oklch(97% 0.018 230) */
+}
+
+/* Orange (强调) */
+page {
+  --orange:      #e8a04a;  /* was: oklch(74% 0.115 62) */
+  --orange-600:  #cf8a35;  /* was: oklch(66% 0.125 55) */
+  --orange-tint: #fbe9c9;  /* was: oklch(95% 0.038 68) */
+}
+
+/* Status (达标判定) */
+page {
+  --pass:      #4ba66c;   /* was: oklch(70% 0.135 158) */
+  --pass-tint: #d4f0dd;   /* was: oklch(94% 0.048 160) */
+  --near:      #d4b85a;   /* was: oklch(80% 0.115 88) */
+  --near-tint: #f5edd0;   /* was: oklch(95% 0.052 92) */
+  --miss:      #828b96;   /* was: oklch(68% 0.010 240) */
+  --miss-tint: #ebeef1;   /* was: oklch(95% 0.006 240) */
+}
+
+/* Geometry (圆角/阴影/字体) */
+page {
+  --radius:    20px;
+  --radius-s:  14px;
+  --radius-xs: 10px;
+  --shadow:    0 1px 2px rgba(20, 30, 50, 0.05), 0 8px 24px rgba(20, 30, 50, 0.07);
+  --shadow-lg: 0 2px 6px rgba(20, 30, 50, 0.08), 0 22px 50px rgba(20, 30, 50, 0.14);
+
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", ui-monospace, "Menlo", monospace;
+}

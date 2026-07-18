@@ -1,0 +1,12 @@
+<!-- pages/class-overview/class-overview.wxml — 班级成绩
+     Reviewer 提示:这个 page 用 utils/charts.js 渲染 SVG(柱状/折线/环形图) -->
+<view class="page">
+  <view class="appbar">
+    <view class="appbar__title">班级成绩</view>
+  </view>
+  <view class="pad">
+    <view class="card">
+      <view class="muted">班级成绩图表待生成</view>
+    </view>
+  </view>
+</view>

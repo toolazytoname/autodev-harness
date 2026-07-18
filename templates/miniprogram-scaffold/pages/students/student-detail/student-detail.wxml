@@ -1,0 +1,14 @@
+<!-- pages/students/student-detail.wxml — 学员详情
+     包含:成绩历史折线图、各泳姿达标柱状图、晋级环形图
+     generator:用 utils/charts.js 渲染 SVG,rich-text 包裹 -->
+<view class="page">
+  <view class="appbar">
+    <view class="appbar__title">{{studentName}}</view>
+  </view>
+  <view class="pad">
+    <view class="card">
+      <view class="muted">学员详情图表待生成</view>
+      <!-- TODO(g-4): lineChart / barChart / donut,见 utils/charts.js -->
+    </view>
+  </view>
+</view>

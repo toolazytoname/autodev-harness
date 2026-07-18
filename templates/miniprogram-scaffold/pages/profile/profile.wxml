@@ -1,0 +1,15 @@
+<!-- pages/profile/profile.wxml — 我的(角色切换 + 设置)
+     这个 page 包含角色切换(coach/parent)按钮,通过 shared/role.js 操作 -->
+<view class="page">
+  <view class="appbar">
+    <view class="appbar__title">我的</view>
+  </view>
+  <view class="pad">
+    <view class="card">
+      <view class="role-row">
+        <view class="muted">当前身份</view>
+        <button class="role-pill" bindtap="toggleRole">{{roleLabel}}</button>
+      </view>
+    </view>
+  </view>
+</view>

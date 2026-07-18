@@ -195,6 +195,11 @@ class PipelineConfig:
     # directly. Set via --skip-ui-review or auto-detected from brief
     # keywords (POC / 原型 / taste 把关 / etc.).
     skip_ui_review: bool = False
+    # T-Bridge: when set to "od_reverse_engineer", UIPhase reads this
+    # from WorkflowState and switches into `mode=faithful` (no 4-direction
+    # divergence, no LLM call — just copy OD HTML into preview/versions/
+    # od-source/). Set by `__main__` when the user passes `--design-draft DIR`.
+    brief_mode: str = "freeform"
     # Injected for testability; defaults are created lazily in Pipeline
     log: Callable[[str], None] = print
 
@@ -358,6 +363,7 @@ class Pipeline:
             current_phase=current,
             completed_phases=completed,
             mode=self._config.mode,
+            brief_mode=self._config.brief_mode,
             max_iterations=self._config.max_iterations,
             pass_threshold=self._config.pass_threshold,
         )

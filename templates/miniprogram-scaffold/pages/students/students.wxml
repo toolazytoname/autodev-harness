@@ -1,0 +1,35 @@
+<!-- pages/students/students.wxml — 学员管理
+     5 个 page 中交互最复杂的一个:列表 + 班级筛选 + 搜索 + 编辑/删除弹层
+     generator 看到这个 page 时要重点关注 sheet/scrim 的 wx:if 模式 -->
+<view class="page">
+  <view class="appbar">
+    <view class="appbar__title">学员管理</view>
+    <view class="appbar__grow"></view>
+    <button class="appbar__act coach-only" bindtap="openEdit">+ 添加</button>
+  </view>
+  <view class="pad pad-t">
+    <view class="searchbar">
+      <input id="q" placeholder="搜索学员姓名…" bindinput="onSearch" value="{{q}}" />
+    </view>
+    <scroll-view class="filters" scroll-x="true">
+      <!-- TODO(g-3): 班级 chip 列表(由 generator 用 wx:for 渲染) -->
+    </scroll-view>
+    <view class="stack" style="margin-top:14px">
+      <!-- TODO(g-3): 学员 card 列表 -->
+    </view>
+    <view class="empty" wx:if="{{list.length === 0}}">未找到匹配的学员</view>
+  </view>
+
+  <!-- 编辑 / 新增 弹层 -->
+  <view class="scrim" wx:if="{{editOpen}}" bindtap="closeScrim">
+    <view class="sheet" catchtap="noop">
+      <!-- TODO(g-3): 编辑表单 -->
+    </view>
+  </view>
+  <!-- 删除确认 -->
+  <view class="scrim scrim--center" wx:if="{{delOpen}}" bindtap="closeScrim">
+    <view class="dialog" catchtap="noop">
+      <!-- TODO(g-3): 删除确认 -->
+    </view>
+  </view>
+</view>
