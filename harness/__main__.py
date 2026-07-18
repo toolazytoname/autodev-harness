@@ -352,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
         next_resume_count=next_resume_count,
         skip_ui_review=skip_ui,
         brief_mode=brief_mode,
+        od_dir=args.design_draft,
     )
 
     # T45 — Open Design probe. If OD is detected (or forced via

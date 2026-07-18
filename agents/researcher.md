@@ -45,6 +45,24 @@
 
 5. **结合 1+2+3(+4)** 在脑中形成"我到底要自己造什么 vs 在什么上迭代"的判断。
 
+6. **miniprogram brief 强制调研（T-Bridge）**：当 Brief 含「小程序 /
+   微信小程序 / miniprogram / wechat / weapp / apps/miniapp / wxss /
+   wxml」任一时,必须在 §四 复用决策表里至少包含以下候选中的 2 项
+   `wrap` / `drop` 决策(写明哪个用作 UI baseline,哪个不用的理由):
+
+   | 候选 | 定位 | 何时选 |
+   |---|---|---|
+   | Tencent/weui-wxss | 微信官方设计语言,1.6k star,零依赖 | 页面 ≤ 5 + 偏原生时 |
+   | youzan/vant-weapp | 有赞,18k star,生态最大 | 业务复杂(表单/弹窗多) |
+   | TDesignOfficial/Lin UI | 腾讯 TDesign 微信版,8k star | 已有 TDesign 体系 |
+   | wx-charts | 老牌 SVG 图表库 | 真要图表库时(OD 自带 SVG 通常够用) |
+
+   选 baseline 的依据写到表格的「理由」列。不允许这 4 个全部 drop
+   (那样等于裸写小程序,违反「先找轮子」原则)。如果 brief 实在只用
+   2-3 个极简 page,允许只列 2 行(最低门槛);复杂业务列 3-4 行。
+
+   参考:`docs/MINIPROGRAM-LIBRARIES.md` 有完整简介 + 选型矩阵。
+
 ## 输出格式（唯一允许的格式）
 
 直接输出以下结构的报告到 stdout（不要包含其他任何文字）：

@@ -19,6 +19,7 @@
       "name": "任务名称",
       "description": "实现内容描述",
       "kind": "ui|api|logic|infra",
+      "platform": "web|mobile|miniprogram",
       "acceptance": [
         "用户流程步骤 1",
         "$ shell command for test reviewer",
@@ -38,7 +39,18 @@
    - `api` — 涉及 HTTP/RPC 端点、请求/响应 schema、鉴权
    - `logic` — 纯业务逻辑、计算、状态机、数据库 CRUD（无 UI、无网络）
    - `infra` — 构建、部署、CI、监控、日志、配置
-2. **每个 task 必须有 `acceptance` 数组**，至少 1 条；理想 2-5 条。
+2. **每个 task 必须有 `platform`**：三选一，根据目标运行时选定：
+   - `web` — Next.js / Vite / 普通 web SPA（默认）
+   - `mobile` — iOS / Android 原生 / React Native / Flutter
+   - `miniprogram` — 微信小程序 / 抖音小程序等（用 `agents/generator-miniprogram.md` 而非 `generator.md`）
+
+   **平台推导规则**（按 brief 文本信号）：
+   - brief 含「小程序 / 微信小程序 / miniprogram / wechat / weapp /
+     apps/miniapp / 微信 / wxss / wxml」任一 → 所有 task 写 `"platform": "miniprogram"`
+   - brief 含「ios / android / react-native / flutter / mobile / 移动端 / app」任一 → `"mobile"`
+   - 否则 → `"web"`
+   - **整个项目应该是同一个 platform**;不要混。如果 brief 里既有 web 信号又有 miniapp 信号,默认 miniapp(用户描述一般以最近的为准)
+3. **每个 task 必须有 `acceptance` 数组**，至少 1 条；理想 2-5 条。
    - 数组里每一项都是**可执行**的——test reviewer 必须能直接把它
      翻译成命令 / HTTP 调用 / browser-use 步骤。
    - 写法提示（test reviewer 会按这些前缀分类）：
@@ -49,13 +61,13 @@
        empty form, see 'Email required' error"
      - pytest：直接写 `pytest <node-id>` 或 `tests/test_x.py runs green`
      - 否则：当成人工复核项写，例如 "Code passes ruff lint"
-3. **kind 与 acceptance 风格必须匹配**：
+4. **kind 与 acceptance 风格必须匹配**：
    - `ui` task 的 acceptance 至少 1 条是 browser-flow 步骤。
    - `api` task 的 acceptance 至少 1 条是 HTTP 或 shell（curl）。
    - `logic` task 的 acceptance 至少 1 条是 shell 或 pytest。
    - `infra` task 的 acceptance 至少 1 条是 shell（跑命令）。
-4. **依赖关系**：有依赖的任务要列出前置任务 id。
-5. **大小合适**：一个 task 应该耗时 1-4 小时；超过就拆。
+5. **依赖关系**：有依赖的任务要列出前置任务 id。
+6. **大小合适**：一个 task 应该耗时 1-4 小时；超过就拆。
 
 ## 规则
 

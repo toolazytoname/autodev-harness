@@ -164,17 +164,17 @@ UI_DIRECTIONS: list[dict[str, str]] = [
     },
 ]
 
-# ``pick_directions_for_brief`` and ``extract_ui_output`` moved to
-# harness.ui_phase (T24). Re-exported below — safe at module level
-# because the cycle was broken by moving PipelineError / _is_interactive
-# to harness.pipeline_base.
-from harness.ui_phase import (  # noqa: E402,F401  (T24 re-export)
-    extract_ui_output,
-    pick_directions_for_brief,
-)
 # T24 — PipelineError and _is_interactive moved to pipeline_base so
 # harness.ui_phase can import them without creating a circular import
 # with harness.pipeline.
+# NOTE: previously this block also re-exported
+# ``extract_ui_output`` and ``pick_directions_for_brief`` from
+# harness.ui_phase for back-compat. Those re-exports formed a
+# baseline circular import (pipeline → ui_phase → pipeline) that
+# broke any test that imported harness.ui_phase directly. No
+# caller imported the re-exports (verified by grep), so the
+# dead-code cycle was removed. Callers should import from
+# ``harness.ui_phase`` directly.
 from harness.pipeline_base import PipelineError, _is_interactive  # noqa: E402,F401
 
 
@@ -200,6 +200,10 @@ class PipelineConfig:
     # divergence, no LLM call — just copy OD HTML into preview/versions/
     # od-source/). Set by `__main__` when the user passes `--design-draft DIR`.
     brief_mode: str = "freeform"
+    # T-Bridge: Open Design project path, set by `__main__` from
+    # `--design-draft DIR`. UIPhase reads this in faithful mode to know
+    # where to copy the HTML from. Optional (None means "no OD source").
+    od_dir: Optional[Path] = None
     # Injected for testability; defaults are created lazily in Pipeline
     log: Callable[[str], None] = print
 
@@ -522,13 +526,18 @@ class Pipeline:
         per-direction call, the slop check, and the version-choice
         prompt all live in ``harness.ui_phase.UIPhase``. ``phase_ui``
         is a thin adapter that loads the plan and forwards to it.
+
+        T-Bridge: when ``self._config.brief_mode == "od_reverse_engineer"``
+        AND ``self._config.od_dir`` is set, UIPhase switches to
+        ``mode=faithful`` and skips the LLM-driven 4-direction loop.
         """
         from harness.ui_phase import UIPhase  # T24 — local import to dodge cycle
 
         plan_text = read_artifact(self._config.project_dir, "002-plan")
         if plan_text is None:
             raise PipelineError("002-plan.md not found — run plan first")
-        return UIPhase(self).run(plan_text)
+        od_dir = getattr(self._config, "od_dir", None)
+        return UIPhase(self).run(plan_text, od_dir=od_dir)
 
     def phase_tasks(self) -> Path:
         self._log("━━━ Phase: tasks ━━━")

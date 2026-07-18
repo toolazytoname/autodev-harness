@@ -26,9 +26,9 @@ from harness.pipeline import (
     Pipeline,
     PipelineConfig,
     PipelineError,
-    extract_ui_output,
 )
 from harness.router import ModelSpec
+from harness.ui_phase import extract_ui_output
 
 
 # ---------------------------------------------------------------------------

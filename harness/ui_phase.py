@@ -18,25 +18,28 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
+from harness.adapters.base import AdapterError, AgentResult
 from harness.artifacts import write_artifact
-from harness.adapters.base import AdapterError
 from harness.env import EnvVars
 from harness.open_design import (
     Direction,
     parse_direction_list,
 )
 from harness.pipeline_base import PipelineError, _is_interactive
+
 # Imported at module scope (instead of inside _generate_topic_directions)
 # so tests can ``patch.object(ui_phase, "_build_direction_gen_prompt", ...)``
 # to short-circuit the LLM call and assert on the parser wiring.
 from harness.prompts import _build_direction_gen_prompt  # noqa: E402,F401
-from harness.pipeline import UI_DIRECTIONS  # noqa: E402,F401  (T45 fallback list)
 
+# NOTE: must come AFTER `harness.prompts` import to dodge the
+# circular import — pipeline.py imports us to re-export `extract_ui_output`.
+from harness.pipeline import UI_DIRECTIONS  # noqa: E402,F401  (T45 fallback list)
 
 # Brief-keyword → direction-slug picker. First match wins; if no
 # keyword matches, fall back to premium-default. The human can
@@ -51,9 +54,9 @@ _DIRECTION_KEYWORDS: list[tuple[str, str]] = [
     (r"docs?|wiki|blog|linear[-\s]?like|notion[-\s]?like|note|writing",
      "editorial-minimal"),
 ]
-import re as _re_module  # local alias; re is stdlib so this is free
+
 _DIRECTION_KEYWORD_PATTERNS = [
-    (_re_module.compile(pattern, _re_module.IGNORECASE), slug)
+    (re.compile(pattern, re.IGNORECASE), slug)
     for pattern, slug in _DIRECTION_KEYWORDS
 ]
 
@@ -105,7 +108,7 @@ def extract_ui_output(raw: str) -> tuple[str, str]:
 
     lines = text.splitlines()
 
-    def _find(marker: str) -> Optional[int]:
+    def _find(marker: str) -> int | None:
         for i, line in enumerate(lines):
             if line.strip() == marker:
                 return i
@@ -179,13 +182,28 @@ class UIPhase:
     # Public entry — equivalent to pipeline.phase_ui
     # ------------------------------------------------------------------
 
-    def run(self, plan_text: str) -> Path:
+    def run(self, plan_text: str, od_dir: Path | None = None) -> Path:
         """Run the full UI phase: derive topic-aware directions → render all
-        in parallel → human pick loop → finalize."""
-        self._log("━━━ Phase: ui_design (topic-aware directions) ━━━")
+        in parallel → human pick loop → finalize.
+
+        ``od_dir`` is the Open Design project path. When set (and the
+        pipeline's ``brief_mode == "od_reverse_engineer"``), the UI phase
+        switches to ``mode=faithful``: it skips the 4-direction divergence
+        loop entirely and copies the OD HTML into
+        ``preview/versions/od-source/`` instead. This is the T-Bridge path
+        used by ``python -m harness --design-draft DIR -- "..."``.
+        """
+        self._log("━━━ Phase: ui_design ━━━")
         if plan_text is None:
             raise PipelineError("002-plan.md not found — run plan first")
 
+        # T-Bridge: when brief_mode says "we have a design draft", bypass
+        # the LLM-driven divergence loop and copy the OD HTML straight in.
+        brief_mode = getattr(self._p._config, "brief_mode", "freeform")
+        if brief_mode == "od_reverse_engineer" and od_dir is not None:
+            return self._render_faithful(od_dir, plan_text)
+
+        self._log("  mode: topic-aware directions")
         versions_dir = self._project_dir / "preview" / "versions"
         versions_dir.mkdir(parents=True, exist_ok=True)
 
@@ -206,6 +224,175 @@ class UIPhase:
         )
         self._run_slop_check(versions)
         return self._human_pick_loop(ordered, plan_text, versions, versions_dir)
+
+    # ------------------------------------------------------------------
+    # Faithful mode (T-Bridge)
+    # ------------------------------------------------------------------
+
+    def _render_faithful(self, od_dir: Path, plan_text: str) -> Path:
+        """Skip the LLM-driven divergence loop. Treat the OD project as
+        the canonical design spec:
+
+          - Copy ``*.html`` + ``shared.css`` + ``shared.js`` from
+            ``od_dir`` into ``<project>/preview/versions/od-source/``.
+          - Write a reduced ``spec.md`` alongside the HTML (just the
+            high-level signal: design system, page list, role gating).
+          - Write ``<project>/preview/index.html`` (canonical landing
+            that links into the copied OD HTML).
+          - Write ``006-ui-spec.md`` at the project root so downstream
+            develop phase can pick it up unchanged.
+
+        Returns the path of ``preview/index.html``.
+        """
+        if not od_dir.exists() or not od_dir.is_dir():
+            raise PipelineError(
+                f"--design-draft path is not a directory: {od_dir}"
+            )
+
+        self._log("  mode: faithful (OD HTML → preview/versions/od-source/)")
+        versions_dir = self._project_dir / "preview" / "versions"
+        versions_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = versions_dir / "od-source"
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1) Copy HTML + shared CSS/JS verbatim. We do NOT re-render or
+        #    re-theme — the OD HTML IS the design spec. Wipe stale files
+        #    first so a re-run doesn't leave orphans from a prior draft.
+        copied: list[str] = []
+        for src in sorted(od_dir.iterdir()):
+            if not src.is_file():
+                continue
+            # Only copy the design-system artifacts; skip the logo, json
+            # sidecars, etc. Anything explicitly named in this allowlist
+            # is part of the OD convention; everything else (logo,
+            # screenshot pngs, etc.) is dropped.
+            if src.suffix.lower() in {".html", ".css", ".js"}:
+                shutil.copy2(src, target_dir / src.name)
+                copied.append(src.name)
+
+        # 2) Reduced spec.md — just enough for downstream develop phase
+        #    to know it's a faithful (not LLM-generated) spec.
+        spec_md = self._build_faithful_spec(od_dir, plan_text, copied)
+        (target_dir / "spec.md").write_text(spec_md, encoding="utf-8")
+
+        # 3) Canonical landing — links into the 5 OD pages so a human
+        #    can open ``<project>/preview/index.html`` in a browser and
+        #    navigate the prototype.
+        landing = self._build_faithful_landing(copied)
+        landing_path = self._project_dir / "preview" / "index.html"
+        landing_path.parent.mkdir(parents=True, exist_ok=True)
+        landing_path.write_text(landing, encoding="utf-8")
+
+        # 4) 006-ui-spec.md at project root — the canonical artifact
+        #    develop phase reads. Mirrors spec.md + lists the OD HTML
+        #    files as the visual reference.
+        write_artifact(
+            self._project_dir,
+            "006-ui-spec",
+            spec_md + "\n\n## OD HTML reference\n\n" + "\n".join(f"- `preview/versions/od-source/{n}`" for n in copied) + "\n",
+        )
+
+        self._log(f"  faithful: copied {len(copied)} files to {target_dir}")
+        return landing_path
+
+    def _build_faithful_spec(self, od_dir: Path, plan_text: str, copied: list[str]) -> str:
+        """Compose a reduced spec.md for faithful mode.
+
+        Pulls back through ``od_ingest.scan_od_project`` so the spec
+        carries the same design tokens + business schema + role signal
+        that 000-brief.md already had — gives the develop phase one
+        consistent source of truth.
+        """
+        from harness import od_ingest  # local import — keeps top-level deps minimal
+
+        try:
+            scan = od_ingest.scan_od_project(od_dir)
+            ingest = scan.ingest
+            tokens_repr = "\n".join(
+                f"- `{n}` = `{v}`" for n, v, _ in ingest.tokens.entries
+            ) or "_(no tokens found)_"
+            pages_repr = "\n".join(f"- `{p}`" for p in ingest.pages.html_files) or "_(no html files)_"
+            role_repr = (
+                "**Yes** — coach/parent gating"
+                if ingest.role_supported
+                else "_No role system_"
+            )
+        except Exception:
+            tokens_repr = "_(scan failed)_"
+            pages_repr = "_(scan failed)_"
+            role_repr = "_(scan failed)_"
+
+        copied_repr = "\n".join(f"- `{n}`" for n in copied) or "_(nothing copied)_"
+        return f"""# UI Spec — faithful (OD HTML reverse-engineered)
+
+> Generated by `UIPhase._render_faithful` (T-Bridge). No LLM was called —
+> this spec mirrors the Open Design project at `{od_dir}` exactly.
+
+## Source
+
+{plan_text.strip().splitlines()[0] if plan_text.strip() else "(no plan text)"}
+
+## Copied artifacts
+
+Copied verbatim into `preview/versions/od-source/`:
+
+{copied_repr}
+
+## Page list (from scan)
+
+{pages_repr}
+
+## Design tokens (from `shared.css`)
+
+{tokens_repr}
+
+## Role system
+
+{role_repr}
+
+## Pipeline notes
+
+- This spec was produced via `--design-draft` (faithful mode).
+- Develop phase should fork `templates/miniprogram-scaffold/` into
+  `<project_dir>/miniprogram/` and translate the OD HTML/CSS/JS into
+  miniprogram idioms. See `docs/OD-TO-MINIPROGRAM-MAPPING.md`.
+- Visual review path: render OD HTML in a browser and screenshot
+  against this spec (the OD HTML is already pixel-faithful).
+"""
+
+    @staticmethod
+    def _build_faithful_landing(copied: list[str]) -> str:
+        """Canonical ``preview/index.html`` linking into the OD HTML files."""
+        links = "\n".join(
+            f'    <li><a href="versions/od-source/{n}">{n}</a></li>'
+            for n in copied
+            if n.endswith(".html")
+        )
+        return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>鱼跃 YuYue — Design Preview</title>
+  <style>
+    body {{ font-family: -apple-system, "PingFang SC", sans-serif;
+            max-width: 720px; margin: 40px auto; padding: 0 24px; color: #364152; }}
+    h1 {{ font-size: 22px; }}
+    ul {{ list-style: none; padding: 0; }}
+    li {{ padding: 8px 0; border-bottom: 1px solid #e3e7ee; }}
+    a {{ color: #1d5da3; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .meta {{ color: #8b95a3; font-size: 13px; margin-bottom: 24px; }}
+  </style>
+</head>
+<body>
+  <h1>鱼跃 YuYue — Design Preview (faithful mode)</h1>
+  <p class="meta">Source: Open Design HTML, copied verbatim by <code>UIPhase._render_faithful</code>.</p>
+  <ul>
+{links}
+  </ul>
+</body>
+</html>
+"""
 
     # ------------------------------------------------------------------
     # Direction generation
@@ -462,12 +649,12 @@ class UIPhase:
                     # would build. Keeping the fallback lightweight
                     # means a single OD hiccup doesn't double the run
                     # time per direction.
+                    from harness.artifacts import Phase
                     from harness.pipeline import (
                         PHASE_SPECS,
                         PHASE_TIMEOUT_SECONDS,
                         _build_ui_prompt,
                     )
-                    from harness.artifacts import Phase
 
                     ui_spec = PHASE_SPECS[Phase.UI]
                     stage = ui_spec.stage

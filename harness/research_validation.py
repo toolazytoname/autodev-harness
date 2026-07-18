@@ -19,11 +19,10 @@ cleanly.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from enum import Enum
-from typing import Iterable, Optional
 
 import pydantic
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -188,8 +187,8 @@ class ValidationResult(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(frozen=True)
 
     is_valid: bool
-    table: Optional[ReuseDecisionTable] = None
-    error: Optional[str] = None
+    table: ReuseDecisionTable | None = None
+    error: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +413,7 @@ def parse_reuse_table(markdown_text: str) -> ReuseDecisionTable:
     return ReuseDecisionTable(decisions=decisions)
 
 
-def extract_reuse_table(markdown_text: str) -> Optional[ReuseDecisionTable]:
+def extract_reuse_table(markdown_text: str) -> ReuseDecisionTable | None:
     """Lenient parser: return the table on success, ``None`` on any error.
 
     Use this when the caller wants to gracefully degrade (e.g. the
@@ -481,6 +480,101 @@ def validate_research_report(markdown_text: str) -> ValidationResult:
 
 
 # ---------------------------------------------------------------------------
+# T-Bridge: miniprogram ecosystem requirements
+# ---------------------------------------------------------------------------
+
+
+# Canonical miniprogram signals — any of these in the brief text triggers
+# the miniprogram-ecosystem gate. Mirrors the keyword set in
+# ``agents/taskgen.md`` so the two phases agree on what "miniprogram"
+# means.
+_MINIPROGRAM_SIGNALS = (
+    "小程序",
+    "miniprogram",
+    "wechat",
+    "weapp",
+    "wxss",
+    "wxml",
+    "wx-",
+    "wx.",
+)
+
+# Recognised miniprogram ecosystem library slugs — used to confirm the
+# researcher's reuse table actually has miniprogram picks. Slugs match
+# GitHub `owner/repo` casing for the canonical candidates from
+# ``docs/MINIPROGRAM-LIBRARIES.md``.
+_MINIPROGRAM_LIB_SLUGS = {
+    "Tencent/weui-wxss",
+    "tencent/weui-wxss",
+    "youzan/vant-weapp",
+    "Youzan/vant-weapp",
+    "TDesignOfficial/Lin UI",
+    "tdesignofficial/lin ui",
+    "xiaolin3303/wx-charts",
+    "wx-charts",
+    "weui-wxss",
+    "vant-weapp",
+    "Lin UI",
+    "lin ui",
+    "tdesign",
+}
+
+
+def brief_targets_miniprogram(brief_text: str) -> bool:
+    """True iff the brief text carries any miniprogram signal keyword.
+
+    Used by :func:`validate_miniprogram_decision_coverage` and by the
+    pipeline's research-phase gate to decide whether the stricter
+    miniprogram ecosystem check applies.
+    """
+    if not brief_text:
+        return False
+    lowered = brief_text.lower()
+    return any(sig.lower() in lowered for sig in _MINIPROGRAM_SIGNALS)
+
+
+def validate_miniprogram_decision_coverage(
+    brief_text: str,
+    table: ReuseDecisionTable,
+) -> ValidationResult:
+    """Enforce the T-Bridge miniprogram ecosystem rule.
+
+    When :func:`brief_targets_miniprogram` is True, the reuse table
+    must cover the miniprogram ecosystem — at least 2 rows must
+    reference a recognised miniprogram library slug (weui-wxss /
+    vant-weapp / Lin UI / wx-charts). Researcher agents that list
+    none, or only one, get a structured failure here so the pipeline
+    can bounce them back into the research phase instead of silently
+    shipping a miniprogram that violates the "first find wheels" rule.
+
+    This is layered on top of :func:`validate_research_report` rather
+    than baked in, so web/mobile briefs keep their existing behaviour
+    unchanged.
+    """
+    if not brief_targets_miniprogram(brief_text):
+        return ValidationResult(is_valid=True, table=table, error=None)
+
+    hits = [
+        d
+        for d in table.decisions
+        if any(slug.lower() in d.candidate.lower() or slug.lower() in d.url.lower()
+               for slug in _MINIPROGRAM_LIB_SLUGS)
+    ]
+    if len(hits) >= 2:
+        return ValidationResult(is_valid=True, table=table, error=None)
+    return ValidationResult(
+        is_valid=False,
+        table=table,
+        error=(
+            f"miniprogram brief detected but the reuse decision table only "
+            f"references {len(hits)} known miniprogram library row(s); "
+            "T-Bridge requires at least 2 (e.g. weui-wxss + vant-weapp "
+            "or Lin UI). See docs/MINIPROGRAM-LIBRARIES.md."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Markdown generation helpers — used by the researcher to be self-consistent
 # ---------------------------------------------------------------------------
 
@@ -498,14 +592,7 @@ def render_reuse_table(decisions: Iterable[ReuseDecision]) -> str:
     header = "| 候选 | URL | 成熟度 | 覆盖% | 决策 | 理由 |"
     sep = "|------|-----|--------|-------|------|------|"
     body_lines = [
-        "| {candidate} | {url} | {maturity} | {coverage} | {decision} | {reason} |".format(
-            candidate=_escape_cell(d.candidate),
-            url=_escape_cell(d.url),
-            maturity=_escape_cell(d.maturity),
-            coverage=d.coverage_pct,
-            decision=d.decision.value,
-            reason=_escape_cell(d.reason),
-        )
+        f"| {_escape_cell(d.candidate)} | {_escape_cell(d.url)} | {_escape_cell(d.maturity)} | {d.coverage_pct} | {d.decision.value} | {_escape_cell(d.reason)} |"
         for d in rows
     ]
     return "\n".join([header, sep, *body_lines])
