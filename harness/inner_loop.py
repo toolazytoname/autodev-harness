@@ -263,6 +263,7 @@ def _run_iteration(
     setup: TaskSetup,
     spec_text: str,
     iter_num: int,
+    agents_dir: Optional[object] = None,
 ) -> IterationResult:
     """Run one pass: generator → diff capture → parallel reviewers.
 
@@ -271,10 +272,15 @@ def _run_iteration(
     loop. Returns the per-iteration bookkeeping the orchestrator
     needs (cards, usage, diff) without performing the gate check or
     the merge.
+
+    T-Bridge — ``agents_dir`` threads the platform-specific generator
+    prompt through to :func:`run_generator`. Pass ``None`` for the
+    legacy default-only behavior (no platform guidance appended).
     """
     generator_output = _run_generator_step(
         adapter=adapter, router=router, setup=setup,
         spec_text=spec_text, iter_num=iter_num,
+        agents_dir=agents_dir,
     )
     diff_text, changed_files, screenshots = _collect_review_context(
         setup=setup, spec_text=spec_text,
@@ -300,6 +306,7 @@ def _run_generator_step(
     setup: TaskSetup,
     spec_text: str,
     iter_num: int,
+    agents_dir: Optional[object] = None,
 ) -> GeneratorOutput:
     """Generate code in the worktree + record token usage.
 
@@ -320,6 +327,11 @@ def _run_generator_step(
         blockers_from_previous=list(setup.previous_blockers),
         suggestions_from_previous=list(setup.previous_suggestions),
         iter_num=iter_num,
+        # T-Bridge: thread task.platform + agents_dir through so the
+        # worker prompt can switch to ``agents/generator-<platform>.md``
+        # (e.g. ``generator-uniapp.md``) for non-web tasks.
+        task_platform=getattr(setup.task, "platform", None),
+        agents_dir=agents_dir,
     )
     router.record("generate", generator_output.usage.usage)
     return generator_output
@@ -543,6 +555,7 @@ def run_inner_loop(
     adapter: AdapterBase,
     router: ModelRouter,
     config: Optional[LoopConfig] = None,
+    agents_dir: Optional[object] = None,
 ) -> list[ScoreCard]:
     """Run the full inner quality loop for a single task.
 
@@ -562,6 +575,7 @@ def run_inner_loop(
             result = _run_iteration(
                 adapter=adapter, router=router, setup=setup,
                 spec_text=spec_text, iter_num=iter_num,
+                agents_dir=agents_dir,
             )
             all_cards.extend(result.cards)
             passed, setup = _gate_after_iteration(

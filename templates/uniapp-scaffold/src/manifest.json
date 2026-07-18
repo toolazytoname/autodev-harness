@@ -1,0 +1,61 @@
+{
+  "name": "鱼跃 YuYue",
+  "appid": "",
+  "description": "少儿游泳俱乐部成绩与晋级管理",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "app-plus": {
+    "usingComponents": true,
+    "nvueStyleCompiler": "uni-app",
+    "compilerVersion": 3,
+    "splashscreen": {
+      "alwaysShowBeforeRender": true,
+      "waiting": true,
+      "autoclose": true,
+      "delay": 0
+    },
+    "modules": {},
+    "distribute": {
+      "android": {
+        "permissions": [
+          "<uses-permission android:name=\"android.permission.INTERNET\"/>"
+        ]
+      },
+      "ios": {},
+      "sdkConfigs": {}
+    }
+  },
+  "quickapp": {},
+  "mp-weixin": {
+    "appid": "touristappid",
+    "setting": {
+      "urlCheck": false,
+      "es6": true,
+      "postcss": true,
+      "minified": true
+    },
+    "usingComponents": true,
+    "permission": {
+      "scope.userLocation": {
+        "desc": "用于定位附近的游泳场馆"
+      }
+    },
+    "requiredPrivateInfos": [],
+    "lazyCodeLoading": "requiredComponents"
+  },
+  "h5": {
+    "title": "鱼跃 YuYue",
+    "router": {
+      "mode": "history",
+      "base": "/"
+    },
+    "devServer": {
+      "port": 8080,
+      "disableHostCheck": true,
+      "https": false
+    },
+    "sdkConfigs": {}
+  },
+  "vueVersion": "3"
+}

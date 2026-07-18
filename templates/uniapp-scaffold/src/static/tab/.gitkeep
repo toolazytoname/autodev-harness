@@ -1,0 +1,7 @@
+# 占位 — tabbar 图标
+# 真实使用:在 src/static/tab/ 下放 8 个 PNG(4 tab × 普通/激活 两个状态):
+#   home.png + home-active.png
+#   class.png + class-active.png
+#   students.png + students-active.png
+#   me.png + me-active.png
+# 81x81 px 即可(uni-app 自动缩放)

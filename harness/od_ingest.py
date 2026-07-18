@@ -444,10 +444,15 @@ the脱敏 convention noted at the top of `shared.js`):
   no `ui_design` topic-direction exploration is needed.
 - `WorkflowState.brief_mode = "od_reverse_engineer"`; `UIPhase` will
   switch to `mode=faithful` and skip the 4-direction divergence loop.
-- Generator should fork `templates/miniprogram-scaffold/` into
-  `<project_dir>/miniprogram/` (5 page + utils + tests/automator) and
-  translate the OD HTML/CSS/JS into miniprogram idioms.
-- See `docs/OD-TO-MINIPROGRAM-MAPPING.md` for the node-mapping table.
+- Generator should fork `templates/uniapp-scaffold/` into
+  `<project_dir>/` (5 page .vue + common/ + store/ + cloudfunctions/ +
+  tests/uni-automator) and translate the OD HTML/CSS/JS into uni-app
+  + Vue 3 idioms (`<template>` / `v-for` / `@click` / `uni.*` API).
+  Backend is **微信云开发 wx.cloud** (云函数 + 云数据库 + openid 鉴权).
+- See `docs/OD-TO-UNIAPP-MAPPING.md` for the node-mapping table.
+- For users on the original miniprogram-only path, see
+  `templates/miniprogram-scaffold/` + `agents/generator-miniprogram.md`
+  + `docs/OD-TO-MINIPROGRAM-MAPPING.md` (kept as the legacy native path).
 """
     return md
 

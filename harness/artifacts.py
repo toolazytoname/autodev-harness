@@ -174,11 +174,14 @@ class Platform(str, Enum):
     - ``web``        → no extra reviewer (visual covers it)
     - ``mobile``     → mobile (Maestro flow validation)
     - ``miniprogram``→ miniprogram (automator on macOS)
+    - ``uniapp``     → uni-app + Vue 3 (uni-automator on macOS, wx.cloud
+                       cloud functions; one codebase, multi-target compile)
     """
 
     WEB = "web"
     MOBILE = "mobile"
     MINIPROGRAM = "miniprogram"
+    UNIAPP = "uniapp"
 
 
 def _legacy_default_acceptance() -> list[str]:

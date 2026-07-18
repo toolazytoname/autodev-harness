@@ -64,6 +64,8 @@ platform_reviewers:
     - mobile
   miniprogram:
     - miniprogram
+  uniapp:
+    - uniapp
 
 # Per-reviewer overrides (optional)
 # Allows disabling or reordering reviewers per task kind

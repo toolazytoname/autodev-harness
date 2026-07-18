@@ -1,0 +1,66 @@
+/* uni.scss — 全局 SCSS 变量(由 uni-app 自动注入到每个 .vue) */
+
+/* 主色:清透水蓝 */
+$uni-color-primary: #5BB5D8;
+$uni-color-primary-light: #A6D9EC;
+$uni-color-primary-dark: #3D8FAD;
+
+/* 辅色:柔和浅橙 */
+$uni-color-secondary: #F5A86B;
+$uni-color-secondary-light: #FAD3B0;
+
+/* 成绩色阶 */
+$uni-color-pass: #7BC97E;     /* 达标绿 */
+$uni-color-warn: #F2D05E;     /* 接近黄 */
+$uni-color-fail: #9AA5B1;     /* 未达灰 */
+$uni-color-miss: #C9D1D9;     /* 缺测 */
+
+/* 中性 */
+$uni-text-color: #2A323C;
+$uni-text-color-inverse: #FFFFFF;
+$uni-text-color-grey: #6B7785;
+$uni-text-color-placeholder: #B0B7BF;
+$uni-text-color-disable: #C9D1D9;
+
+$uni-bg-color: #FFFFFF;
+$uni-bg-color-grey: #F7FAFC;
+$uni-bg-color-hover: #F0F4F8;
+$uni-bg-color-mask: rgba(0, 0, 0, 0.4);
+
+$uni-border-color: #E5EAF0;
+
+/* 字号 */
+$uni-font-size-sm: 24rpx;
+$uni-font-size-base: 28rpx;
+$uni-font-size-lg: 32rpx;
+$uni-font-size-xl: 36rpx;
+$uni-font-size-xxl: 44rpx;
+
+/* 间距 */
+$uni-spacing-row-sm: 10rpx;
+$uni-spacing-row-base: 20rpx;
+$uni-spacing-row-lg: 30rpx;
+$uni-spacing-col-sm: 8rpx;
+$uni-spacing-col-base: 16rpx;
+$uni-spacing-col-lg: 24rpx;
+
+/* 圆角 */
+$uni-border-radius-sm: 8rpx;
+$uni-border-radius-base: 16rpx;
+$uni-border-radius-lg: 24rpx;
+$uni-border-radius-circle: 50%;
+
+/* 字体 */
+$uni-font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC',
+  'Helvetica Neue', Helvetica, 'Hiragino Sans GB', 'Microsoft YaHei',
+  Arial, sans-serif;
+
+/* 项目自定义 token(给 OD HTML 对齐用) */
+$yu-aqua: $uni-color-primary;
+$yu-orange: $uni-color-secondary;
+$yu-pass: $uni-color-pass;
+$yu-warn: $uni-color-warn;
+$yu-fail: $uni-color-fail;
+$yu-ink: $uni-text-color;
+$yu-radius: $uni-border-radius-base;
+$yu-font: $uni-font-family;

@@ -8,6 +8,13 @@ The generator runs in the task worktree using the worker-tier model.
 Its prompt includes the spec plus any feedback from previous
 iterations (blockers + suggestions). Reviewer transcripts are NEVER
 included — only structured feedback, per the design in MASTER-PLAN §2.
+
+Platform-specific guidance (T-Bridge, uni-app era):
+``run_generator`` accepts ``task_platform`` and ``agents_dir``; when set,
+the matching ``agents/generator-<platform>.md`` file is loaded and
+appended to the prompt as a "platform guidance" block. ``resolve_generator_agent``
+returns the file stem for the given platform (so callers can pre-load
+the prompt or branch on the choice).
 """
 
 from __future__ import annotations
@@ -15,6 +22,7 @@ from __future__ import annotations
 import os
 import textwrap
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from harness.adapters.base import AdapterBase, AgentResult
@@ -30,6 +38,55 @@ from harness.router import ModelRouter
 # matches PHASE_TIMEOUT_SECONDS so worst-case wall-clock is
 # predictable. Override: AUTODEV_GENERATOR_TIMEOUT=300 python -m ...
 GENERATOR_TIMEOUT_SECONDS = int(os.environ.get("AUTODEV_GENERATOR_TIMEOUT", "240"))
+
+
+# T-Bridge: map task.platform → agent prompt file stem. The default
+# (``"web"``) falls back to the original ``agents/generator.md``.
+PLATFORM_GENERATOR_AGENT: dict[str, str] = {
+    "web": "generator",
+    "miniprogram": "generator-miniprogram",
+    "uniapp": "generator-uniapp",
+    # ``mobile`` reuses the web generator for now — the prompt covers
+    # RN / Flutter patterns well enough for MVP, and the lack of a
+    # dedicated mobile generator is documented in MASTER-PLAN T19.
+    "mobile": "generator",
+}
+
+
+def resolve_generator_agent(platform: Optional[str]) -> str:
+    """Return the agent prompt file stem for *platform*.
+
+    Unknown / ``None`` / empty values fall back to ``"generator"`` so
+    existing web callers keep working unchanged. The returned value is
+    a filename stem (no ``.md`` extension), suitable for joining with
+    ``agents/`` and passing to :func:`harness.prompts._read_agent_prompt`.
+    """
+    if not platform:
+        return "generator"
+    return PLATFORM_GENERATOR_AGENT.get(platform, "generator")
+
+
+def load_platform_guidance(
+    agents_dir: Optional[Path], platform: Optional[str]
+) -> str:
+    """Return the platform-specific guidance block (empty if absent).
+
+    Used by :func:`run_generator` to append the per-platform prompt to
+    the generic template. Returning an empty string (instead of erroring)
+    when the file is missing keeps a missing file non-fatal — a
+    researcher who picked an unknown platform still gets the generic
+    generator prompt with no platform-specific steering.
+    """
+    if not agents_dir or not platform:
+        return ""
+    stem = resolve_generator_agent(platform)
+    if stem == "generator":
+        return ""  # default prompt is already in _GENERATOR_PROMPT_TEMPLATE
+    path = Path(agents_dir) / f"{stem}.md"
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
 
 
 # Generator prompt template. Kept at module level (vs inlined in
@@ -56,6 +113,8 @@ _GENERATOR_PROMPT_TEMPLATE = textwrap.dedent(
     - Do NOT run tests yourself (that is the reviewers' job).
     - Do NOT include reviewer feedback or score card content in your output.
     - Work only in the current directory (the worktree).
+
+    {platform_guidance}
     """
 )
 
@@ -81,12 +140,20 @@ def run_generator(
     blockers_from_previous: list[str],
     suggestions_from_previous: list[str],
     iter_num: int,
+    task_platform: Optional[str] = None,
+    agents_dir: Optional[Path] = None,
 ) -> GeneratorOutput:
     """Run the generator in the task worktree using the worker-tier model.
 
     T19 — propagates ``spec.base_url`` and the per-tier API key (read
     from ``AUTODEV_API_KEY_<TIER>``) so worker-tier calls reach the
     configured third-party endpoint instead of the default.
+
+    T-Bridge — ``task_platform`` + ``agents_dir`` thread the platform-
+    specific generator prompt through to the worker. ``uniapp`` /
+    ``miniprogram`` append their respective ``agents/generator-<x>.md``
+    file as a guidance block; ``web`` / ``mobile`` / ``None`` use the
+    default template unchanged.
     """
     spec = router.resolve("generate")
     api_key = os.environ.get(api_key_for(spec.tier))
@@ -95,10 +162,18 @@ def run_generator(
         blockers=blockers_from_previous,
         suggestions=suggestions_from_previous,
     )
+    platform_guidance = load_platform_guidance(agents_dir, task_platform)
+    if platform_guidance:
+        platform_guidance = (
+            "## Platform-specific guidance\n\n"
+            f"Task platform is `{task_platform}` — follow these rules:\n\n"
+            f"{platform_guidance}"
+        )
     prompt = _GENERATOR_PROMPT_TEMPLATE.format(
         task_id=task_id, task_title=task_title,
         task_description=task_description or "(no description)",
         spec=spec_text, feedback_block=feedback_block,
+        platform_guidance=platform_guidance,
     )
     # T40 — log every generator attempt so a hung subprocess is
     # visibly distinct from a silent crash. ``iter_num`` is the
@@ -110,7 +185,7 @@ def run_generator(
         attempt=iter_num,
         total=5,  # matches MAX_FEEDBACK_ITERATIONS in pipeline.py
         target=task_id,
-        extra=f"timeout={GENERATOR_TIMEOUT_SECONDS}s",
+        extra=f"timeout={GENERATOR_TIMEOUT_SECONDS}s platform={task_platform or 'web'}",
     )
     result = adapter.run(
         prompt, model=spec.model, cwd=worktree_path,

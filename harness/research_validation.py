@@ -575,6 +575,116 @@ def validate_miniprogram_decision_coverage(
 
 
 # ---------------------------------------------------------------------------
+# T-Bridge: uni-app ecosystem requirements
+# ---------------------------------------------------------------------------
+
+
+# Canonical uni-app signals — any of these in the brief text triggers
+# the uni-app-ecosystem gate. Mirrors the keyword set in
+# ``agents/taskgen.md`` so the two phases agree on what "uniapp" means.
+# uni-app takes precedence over miniprogram when both fire.
+_UNIAPP_SIGNALS = (
+    "uni-app",
+    "uniapp",
+    "uni_app",
+    "vue 3",
+    "vue3",
+    "@dcloudio",
+    "wx.cloud",
+    "cloudfunctions",
+    "云开发",
+    "跨端",
+    "跨平台",
+    "uni ui",
+    "uni-ui",
+    "uniapp",
+    "vite",
+)
+
+# Recognised uni-app ecosystem library slugs — used to confirm the
+# researcher's reuse table actually has uni-app picks. Slugs match
+# GitHub `owner/repo` casing for the canonical candidates:
+# - dcloudio/uni-app        — runtime
+# - dcloudio/uni-ui         — official component lib
+# - vuejs/pinia             — state management
+# - dcloudio/uni-automator  — test runtime
+_UNIAPP_LIB_SLUGS = {
+    "dcloudio/uni-app",
+    "DCloudIO/uni-app",
+    "@dcloudio/uni-app",
+    "dcloudio/uni-ui",
+    "DCloudIO/uni-ui",
+    "@dcloudio/uni-ui",
+    "vuejs/pinia",
+    "Vuejs/pinia",
+    "pinia",
+    "dcloudio/uni-automator",
+    "@dcloudio/uni-automator",
+    "uni-automator",
+    "uniapp",
+    "uni-ui",
+}
+
+
+def brief_targets_uniapp(brief_text: str) -> bool:
+    """True iff the brief text carries any uni-app signal keyword.
+
+    Used by :func:`validate_uniapp_decision_coverage` and by the
+    pipeline's research-phase gate to decide whether the stricter
+    uni-app ecosystem check applies. uni-app signals take precedence
+    over miniprogram signals — a brief that mentions both is treated
+    as uni-app because uni-app can compile down to WeChat mini-program
+    (superset of miniprogram).
+    """
+    if not brief_text:
+        return False
+    lowered = brief_text.lower()
+    return any(sig.lower() in lowered for sig in _UNIAPP_SIGNALS)
+
+
+def validate_uniapp_decision_coverage(
+    brief_text: str,
+    table: ReuseDecisionTable,
+) -> ValidationResult:
+    """Enforce the T-Bridge uni-app ecosystem rule.
+
+    When :func:`brief_targets_uniapp` is True, the reuse table must
+    cover the uni-app ecosystem — at least 2 rows must reference a
+    recognised uni-app library slug (uni-app runtime, uni-ui, pinia,
+    uni-automator). Researcher agents that list none, or only one,
+    get a structured failure here so the pipeline can bounce them
+    back into the research phase instead of silently shipping a
+    uni-app project that violates the "first find wheels" rule.
+
+    This is layered on top of :func:`validate_research_report` rather
+    than baked in, so web/miniprogram briefs keep their existing
+    behaviour unchanged.
+    """
+    if not brief_targets_uniapp(brief_text):
+        return ValidationResult(is_valid=True, table=table, error=None)
+
+    hits = [
+        d
+        for d in table.decisions
+        if any(slug.lower() in d.candidate.lower() or slug.lower() in d.url.lower()
+               for slug in _UNIAPP_LIB_SLUGS)
+    ]
+    if len(hits) >= 2:
+        return ValidationResult(is_valid=True, table=table, error=None)
+    return ValidationResult(
+        is_valid=False,
+        table=table,
+        error=(
+            f"uni-app brief detected but the reuse decision table only "
+            f"references {len(hits)} known uni-app library row(s); "
+            "T-Bridge requires at least 2 (e.g. @dcloudio/uni-app + "
+            "@dcloudio/uni-ui, or + pinia, or + uni-automator). "
+            "See docs/OD-TO-UNIAPP-MAPPING.md."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Markdown generation helpers — used by the researcher to be self-consistent
 # ---------------------------------------------------------------------------
 

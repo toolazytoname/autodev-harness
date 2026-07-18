@@ -1,0 +1,2 @@
+# 占位 — generator 第一个 task 应替换为真实 Logo
+# 真实使用:在 src/static/ 下放俱乐部 logo.png,然后 App.vue / 各 page 引用

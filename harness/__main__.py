@@ -103,11 +103,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Project directory (default: cwd). Use 'config' / 'quota-status' "
              "to print the routing table or quota-hold status.",
     )
+    # NOTE: positional with REMAINDER is a known argparse footgun — it
+    # greedily swallows everything declared *before* it (including
+    # earlier --flags). We use plain `nargs="*"` and split on the
+    # `--` sentinel ourselves so flags like --design-draft that the
+    # user types before `--` still resolve to their declared dests.
     parser.add_argument(
-        "brief", nargs=argparse.REMAINDER,
+        "brief", nargs="*",
         help="Project description after `--`",
     )
     return parser
+
+
+def _split_brief_args(raw: list[str]) -> list[str]:
+    """Extract tokens that come after the ``--`` sentinel in ``raw``.
+
+    ``raw`` is argparse's positional ``brief`` bucket. The bash-style
+    contract is: everything before ``--`` is treated as leftover
+    positional noise (rare in practice — usually empty); everything
+    after ``--`` is the user's description. The ``--`` itself is
+    dropped.
+    """
+    if "--" in raw:
+        _, _, after = raw.partition("--")
+        return [w for w in after.split() if w and w != "--"]
+    return [w for w in raw if w and w != "--"]
 
 
 def _print_status(project_dir: Path) -> int:
@@ -290,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
     project_dir.mkdir(parents=True, exist_ok=True)
 
     # Brief from CLI (after `--`), matching bash create_brief_from_args
-    brief_words = [w for w in args.brief if w != "--"]
+    brief_words = _split_brief_args(args.brief)
     brief_path = get_artifact_path(project_dir, "000-brief")
 
     # T-Bridge: --design-draft DIR pre-empts free-form brief with an

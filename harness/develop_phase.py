@@ -89,6 +89,10 @@ class DevelopPhase:
                     adapter=self._p._adapter,
                     router=self._p._router,
                     config=loop_config,
+                    # T-Bridge: thread the agents dir so the per-platform
+                    # generator prompt (e.g. generator-uniapp.md) gets
+                    # appended to the worker prompt for non-web tasks.
+                    agents_dir=self._p._agents_dir,
                 )
                 self._p._log(f"✅ Task {task.id} passed gate and merged")
                 self._safe_linear(

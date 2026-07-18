@@ -1,0 +1,9 @@
+{
+  "name": "updateScore",
+  "version": "1.0.0",
+  "description": "成绩写入 / 更正 / 删除(upsert 模式)",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

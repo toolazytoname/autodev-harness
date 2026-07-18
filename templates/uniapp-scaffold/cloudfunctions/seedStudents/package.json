@@ -1,0 +1,9 @@
+{
+  "name": "seedStudents",
+  "version": "1.0.0",
+  "description": "一次性灌入示例学员数据到 students 集合",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

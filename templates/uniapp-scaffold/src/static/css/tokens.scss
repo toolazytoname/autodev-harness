@@ -1,0 +1,51 @@
+/* tokens.scss — CSS 变量定义(供 App.vue 全局 @import) */
+:root {
+  /* 主色 — 来自 uni.scss 的 SCSS 变量 */
+  --aqua: #5BB5D8;
+  --aqua-light: #A6D9EC;
+  --aqua-dark: #3D8FAD;
+
+  /* 辅色 */
+  --orange: #F5A86B;
+  --orange-light: #FAD3B0;
+
+  /* 成绩色阶 */
+  --pass: #7BC97E;
+  --warn: #F2D05E;
+  --fail: #9AA5B1;
+  --miss: #C9D1D9;
+
+  /* 中性 */
+  --ink: #2A323C;
+  --ink-grey: #6B7785;
+  --bg: #F7FAFC;
+  --bg-card: #FFFFFF;
+  --bg-hover: #F0F4F8;
+  --border: #E5EAF0;
+  --mask: rgba(0, 0, 0, 0.4);
+
+  /* 圆角 */
+  --radius: 16rpx;
+  --radius-lg: 24rpx;
+  --radius-sm: 8rpx;
+
+  /* 字体 */
+  --font: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue',
+    Helvetica, 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
+
+  /* 字号 */
+  --fs-sm: 24rpx;
+  --fs-base: 28rpx;
+  --fs-lg: 32rpx;
+  --fs-xl: 36rpx;
+  --fs-xxl: 44rpx;
+
+  /* 间距 */
+  --sp-row: 20rpx;
+  --sp-col: 16rpx;
+}
+
+/* 字号(uni-app rpx → rem 映射) */
+page {
+  font-size: 28rpx;
+}

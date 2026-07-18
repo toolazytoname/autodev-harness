@@ -36,19 +36,19 @@ from typing import Optional
 class PreflightAnswers:
     """One decision per question. ``None`` = "use harness default"."""
 
-    product_form: Optional[str] = None      # web | miniprogram | native-ios | native-android | desktop
+    product_form: Optional[str] = None      # web | uni-app | miniprogram | native-ios | native-android | desktop
     device: Optional[str] = None            # phone | phone-tablet | responsive | desktop
     visual: Optional[str] = None            # minimalist-ui | gpt-taste | industrial-brutalist-ui | stitch-design-taste
     scope_in: list[str] = field(default_factory=list)  # which features are v1 must-have
-    auth: Optional[str] = None              # none | simple-password | accounts
+    auth: Optional[str] = None              # none | simple-password | accounts | wechat-openid
     notes: str = ""                         # free-form additions
 
 
 QUESTIONS: list[tuple[str, str, list[str]]] = [
     (
         "product_form",
-        "产品形态是什么？Harness 现在主要支持 web（React/Vite）。其他形态需要额外配置。",
-        ["web", "wechat-miniprogram (Taro)", "native-ios", "native-android", "desktop-electron"],
+        "产品形态是什么？Harness 默认 web（React/Vite）。uni-app 一套代码同时输出微信小程序 + H5 + iOS/Android；纯 miniprogram 是单端原生小程序。",
+        ["web", "uni-app (Vue 3 + 微信云开发)", "wechat-miniprogram (Taro)", "native-ios", "native-android", "desktop-electron"],
     ),
     (
         "device",
@@ -67,23 +67,34 @@ QUESTIONS: list[tuple[str, str, list[str]]] = [
     ),
     (
         "auth",
-        "登录 / 权限？",
-        ["none", "simple-password", "accounts"],
+        "登录 / 权限？uni-app + 微信云开发推荐 wechat-openid（云函数拿 OPENID，无需自建登录页）。",
+        ["none", "simple-password", "accounts", "wechat-openid"],
     ),
 ]
 
 
 def _autofill_from_brief(brief_text: str) -> PreflightAnswers:
-    """Best-effort guess at product form / device from the brief text.
+    """Best-effort guess at product form / device / auth from the brief text.
 
     Keeps the user from having to answer things the brief already
     declared. Never raises — a regex miss just leaves the answer None
     and the user will be asked.
+
+    Priority order for product_form (highest first):
+      1. uni-app / uniapp / vue 3 / vite / 跨端 / 微信云开发 / wx.cloud
+      2. 微信小程序 / miniprogram / wechat
+      3. native iOS / Android
     """
     answers = PreflightAnswers()
     text = brief_text.lower()
-    if "小程序" in brief_text or "miniprogram" in text or "wechat" in text:
+    # uni-app 一类关键词(优先级最高,涵盖 miniprogram 编译产物)
+    uniapp_signals = ("uni-app", "uniapp", "vue 3", "vue3", "wx.cloud", "cloudfunctions", "云开发", "跨端", "跨平台")
+    if any(sig.lower() in text for sig in uniapp_signals):
+        answers.product_form = "uni-app (Vue 3 + 微信云开发)"
+        answers.auth = "wechat-openid"
+    elif "小程序" in brief_text or "miniprogram" in text or "wechat" in text:
         answers.product_form = "wechat-miniprogram (Taro)"
+        answers.auth = "wechat-openid"
     if "ios" in text and "android" not in text:
         answers.product_form = answers.product_form or "native-ios"
     if "桌面" in brief_text or "desktop" in text:

@@ -19,7 +19,7 @@
       "name": "任务名称",
       "description": "实现内容描述",
       "kind": "ui|api|logic|infra",
-      "platform": "web|mobile|miniprogram",
+      "platform": "web|mobile|miniprogram|uniapp",
       "acceptance": [
         "用户流程步骤 1",
         "$ shell command for test reviewer",
@@ -39,17 +39,20 @@
    - `api` — 涉及 HTTP/RPC 端点、请求/响应 schema、鉴权
    - `logic` — 纯业务逻辑、计算、状态机、数据库 CRUD（无 UI、无网络）
    - `infra` — 构建、部署、CI、监控、日志、配置
-2. **每个 task 必须有 `platform`**：三选一，根据目标运行时选定：
+2. **每个 task 必须有 `platform`**：四选一，根据目标运行时选定：
    - `web` — Next.js / Vite / 普通 web SPA（默认）
    - `mobile` — iOS / Android 原生 / React Native / Flutter
-   - `miniprogram` — 微信小程序 / 抖音小程序等（用 `agents/generator-miniprogram.md` 而非 `generator.md`）
+   - `miniprogram` — 原生微信小程序 / 抖音小程序等（用 `agents/generator-miniprogram.md` 而非 `generator.md`）
+   - `uniapp` — uni-app + Vue 3 + Vite 跨端(微信小程序 / H5 / iOS / Android),用 `agents/generator-uniapp.md`,后端走微信云开发 wx.cloud
 
-   **平台推导规则**（按 brief 文本信号）：
+   **平台推导规则**（按 brief 文本信号,优先级从高到低）：
+   - brief 含「uni-app / uniapp / vue 3 / vue3 / vite / 跨端 / 跨平台 /
+     微信云开发 / wx.cloud / cloudfunctions」任一 → 所有 task 写 `"platform": "uniapp"`
    - brief 含「小程序 / 微信小程序 / miniprogram / wechat / weapp /
      apps/miniapp / 微信 / wxss / wxml」任一 → 所有 task 写 `"platform": "miniprogram"`
    - brief 含「ios / android / react-native / flutter / mobile / 移动端 / app」任一 → `"mobile"`
    - 否则 → `"web"`
-   - **整个项目应该是同一个 platform**;不要混。如果 brief 里既有 web 信号又有 miniapp 信号,默认 miniapp(用户描述一般以最近的为准)
+   - **整个项目应该是同一个 platform**;不要混。如果 brief 里既有 web 信号又有 miniapp / uniapp 信号,默认 miniapp/uniapp(用户最近的意图优先,uniapp 优先于纯 miniprogram 因为前者能 cover 后者)
 3. **每个 task 必须有 `acceptance` 数组**，至少 1 条；理想 2-5 条。
    - 数组里每一项都是**可执行**的——test reviewer 必须能直接把它
      翻译成命令 / HTTP 调用 / browser-use 步骤。
