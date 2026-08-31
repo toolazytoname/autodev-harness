@@ -9,7 +9,7 @@ description = "AI-driven development harness with independent quality loops"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0",
-    "pyyaml>=6.0",
+    "pyyaml>=6.0.3",
     "pytest>=8.0",
 ]
 
